@@ -394,6 +394,7 @@ function handleKey(e) {
         const helpOverlay = document.getElementById('helpOverlay');
         const eqOverlay = document.getElementById('equationsOverlay');
 
+
         if (helpOverlay.style.display === 'block') {
             helpOverlay.style.display = 'none';
         }
@@ -408,22 +409,19 @@ function handleKey(e) {
     } else if (e.code === 'Enter') {
         setPredefinedParameters();
         updateParametersUI();
+    } else if (e.code === 'ArrowUp') {
+        rotationX -= 0.1;
+    } else if (e.code === 'ArrowDown') {
+        rotationX += 0.1;
+    } else if (e.code === 'ArrowLeft') {
+        rotationY -= 0.1;
+    } else if (e.code === 'ArrowRight') {
+        rotationY += 0.1;
     } else {
         let p = attractorParams[attractorType];
         if (!p) return;
         const keys = Object.keys(p);
         if (keys.length === 0) return;
-
-        if (attractorType === 'lorenz') {
-            if (e.code === 'ArrowUp') { p.rho += step; }
-            else if (e.code === 'ArrowDown') { p.rho -= step; }
-            else if (e.code === 'ArrowLeft') { p.sigma -= step; }
-            else if (e.code === 'ArrowRight') { p.sigma += step; }
-        } else {
-            let primaryParam = keys[0];
-            if (e.code === 'ArrowUp' || e.code === 'ArrowRight') p[primaryParam] += step;
-            if (e.code === 'ArrowDown' || e.code === 'ArrowLeft') p[primaryParam] -= step;
-        }
         updateParametersUI();
     }
 }
@@ -544,12 +542,22 @@ function animate() {
         }
     }
 
+    // compute attractor center of mass
+    let cx = 0, cy = 0, cz = 0;
+    for (let p of particles) {
+        cx += p.x; cy += p.y; cz += p.z;
+    }
+
+    cx /= particles.length;
+    cy /= particles.length;
+    cz /= particles.length;
+
     for (let p of particles) {
         if (showTrails) {
             ctx.beginPath();
             for (let i = 0; i < p.history.length; i++) {
                 let point = p.history[i];
-                let { px, py } = projectToScreen(point.x, point.y, point.z, centerX, centerY, scaleFactor);
+                let { px, py } = projectToScreen(point.x, point.y, point.z, centerX, centerY, scaleFactor, cx, cy, cz);
                 if (i === 0) ctx.moveTo(px, py);
                 else ctx.lineTo(px, py);
             }
@@ -557,22 +565,26 @@ function animate() {
             ctx.lineWidth = 1;
             ctx.stroke();
         } else {
-            let { px, py } = projectToScreen(p.x, p.y, p.z, centerX, centerY, scaleFactor);
+            let { px, py } = projectToScreen(p.x, p.y, p.z, centerX, centerY, scaleFactor, cx, cy, cz);
             ctx.fillStyle = getColor(p);
             ctx.fillRect(px, py, 2, 2);
         }
     }
 }
 
-function projectToScreen(x, y, z, centerX, centerY, scaleFactor) {
+function projectToScreen(x, y, z, centerX, centerY, scaleFactor, cx = 0, cy = 0, cz = 0) {
+    // translate relative to center of mass
+    x -= cx; y -= cy; z -= cz;
+
     let cosX = Math.cos(rotationX), sinX = Math.sin(rotationX);
     let cosY = Math.cos(rotationY), sinY = Math.sin(rotationY);
+
     let xz = x * cosY - z * sinY;
     let zz = z * cosY + x * sinY;
     let yz = y * cosX - zz * sinX;
+
     return { px: xz * scaleFactor + centerX, py: yz * scaleFactor + centerY };
 }
-
 
 function getColor(p) {
     p.hue += p.hueInc * speed;
