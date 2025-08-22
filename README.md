@@ -1,6 +1,6 @@
 # ATTRACTOOL
 
-**ATTRACTOOL** is a dynamic visualization tool for exploring **chaotic attractors** with customizable parameters, interactive controls, and more. Play around with it at https://simon-smida.github.io/vin-attractool/.
+**ATTRACTOOL** is a dynamic visualization tool for exploring **chaotic attractors** with customizable parameters, interactive controls, and more. Play around with it at https://simonsmida.github.io/vin-attractool/.
 
 ![ATTRACTOOL Preview](./attractool.png)
 
