@@ -246,10 +246,40 @@ svg .fill {
 
 /* ------------------------------------------------------ Attractor cards */
 
+@property --fade-start { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --fade-end { syntax: "<length>"; inherits: false; initial-value: 0px; }
+
+/* Two rows in view; the rest scroll, fading out at the edges. */
 .attractor-grid {
+  --fade-start: 0px;
+  --fade-end: 0px;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: start;
   gap: 8px;
+  margin: -4px -6px;
+  padding: 4px 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-snap-type: y proximity;
+  scroll-padding: 4px 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade-start), #000 calc(100% - var(--fade-end)), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade-start), #000 calc(100% - var(--fade-end)), transparent 100%);
+  transition: --fade-start 0.3s ease, --fade-end 0.3s ease;
+}
+
+.attractor-grid.fade-start { --fade-start: 36px; }
+.attractor-grid.fade-end { --fade-end: 56px; }
+
+.attractor-grid::-webkit-scrollbar { width: 6px; }
+.attractor-grid::-webkit-scrollbar-track { background: transparent; }
+.attractor-grid::-webkit-scrollbar-thumb { border-radius: 3px; background: rgba(255, 255, 255, 0.1); }
+.attractor-grid:hover::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); }
+
+.att-card {
+  scroll-snap-align: start;
 }
 
 .att-card {
@@ -982,8 +1012,11 @@ kbd {
     margin: 0 -16px;
     padding: 2px 16px 6px;
     overflow-x: auto;
+    overflow-y: hidden;
     scroll-snap-type: x proximity;
     scroll-padding: 0 16px;
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--fade-start), #000 calc(100% - var(--fade-end)), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 var(--fade-start), #000 calc(100% - var(--fade-end)), transparent 100%);
     scrollbar-width: none;
     overscroll-behavior-x: contain;
   }
@@ -991,6 +1024,9 @@ kbd {
   .attractor-grid::-webkit-scrollbar {
     display: none;
   }
+
+  .attractor-grid.fade-start { --fade-start: 20px; }
+  .attractor-grid.fade-end { --fade-end: 40px; }
 
   .att-card {
     flex: 0 0 104px;

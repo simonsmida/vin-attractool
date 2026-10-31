@@ -1806,17 +1806,18 @@ function zoomAt(k, clientX, clientY, immediate) {
 }
 
 // --------------------------------------------------------------------------
-// Pointer input. One finger or the left button rotates; two fingers pinch
-// to zoom and move together to pan; the right or middle button, or
-// Shift + left drag, pans with a mouse.
+// Pointer input. Touch: one or two fingers rotate, two fingers also pinch
+// to zoom, three fingers pan. Mouse: left drag rotates; right or middle
+// drag, or Shift + left drag, pans.
 // --------------------------------------------------------------------------
 
 const pointer = {
     active: new Map(),               // pointerId -> {x, y}
-    dragging: false,                 // rotating
+    dragging: false,                 // rotating with one pointer
     panning: false,                  // panning with a mouse button
     lastX: 0, lastY: 0, lastMove: 0,
-    pinchDist: 0, midX: 0, midY: 0,
+    // Multi-touch gesture: centroid and spread of the fingers down.
+    n: 0, cx: 0, cy: 0, spread: 0,
     lastTap: 0
 };
 const ROTATE_PER_PX = 0.0055;
@@ -1825,11 +1826,22 @@ function noteInput() {
     cam.lastInput = performance.now();
 }
 
-function startTwoFinger() {
-    const [a, b] = pointer.active.values();
-    pointer.pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
-    pointer.midX = (a.x + b.x) / 2;
-    pointer.midY = (a.y + b.y) / 2;
+function touchGesture() {
+    let cx = 0, cy = 0;
+    const pts = [...pointer.active.values()];
+    for (const p of pts) { cx += p.x; cy += p.y; }
+    cx /= pts.length; cy /= pts.length;
+    let spread = 0;
+    for (const p of pts) spread += Math.hypot(p.x - cx, p.y - cy);
+    return { n: pts.length, cx, cy, spread: spread / pts.length };
+}
+
+/* Start (or restart, when a finger is added or lifted) a multi-touch
+   gesture from the current fingers, so nothing jumps. */
+function beginGesture(t) {
+    const g = touchGesture();
+    pointer.n = g.n; pointer.cx = g.cx; pointer.cy = g.cy; pointer.spread = g.spread;
+    pointer.lastMove = t;
 }
 
 function onPointerDown(e) {
@@ -1837,9 +1849,8 @@ function onPointerDown(e) {
     pointer.active.set(e.pointerId, { x: e.clientX, y: e.clientY });
     noteInput();
     cam.reset = null;
+    cam.velA = cam.velB = 0;              // grabbing stops any glide
     if (pointer.active.size === 1) {
-        // Grabbing stops any glide, like catching a spinning globe.
-        cam.velA = cam.velB = 0;
         pointer.lastX = e.clientX;
         pointer.lastY = e.clientY;
         pointer.lastMove = e.timeStamp;
@@ -1856,11 +1867,10 @@ function onPointerDown(e) {
             if (e.timeStamp - pointer.lastTap < 300) resetView();
             pointer.lastTap = e.timeStamp;
         }
-    } else if (pointer.active.size === 2) {
+    } else {
         pointer.dragging = pointer.panning = false;
-        cam.velA = cam.velB = cam.pendA = cam.pendB = 0;
-        canvas.classList.remove("dragging", "panning");
-        startTwoFinger();
+        canvas.classList.remove("panning");
+        beginGesture(e.timeStamp);
     }
 }
 
@@ -1869,17 +1879,24 @@ function onPointerMove(e) {
     pointer.active.set(e.pointerId, { x: e.clientX, y: e.clientY });
     noteInput();
 
-    if (pointer.active.size === 2) {
-        // Pinch zooms about the fingers' midpoint while the midpoint's
-        // travel pans, so the content stays under the fingers.
-        const [a, b] = pointer.active.values();
-        const d = Math.hypot(a.x - b.x, a.y - b.y);
-        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-        panBy((mx - pointer.midX) * dpr, -(my - pointer.midY) * dpr, true);
-        if (pointer.pinchDist > 0 && d > 0) zoomAt(d / pointer.pinchDist, mx, my, true);
-        pointer.pinchDist = d;
-        pointer.midX = mx;
-        pointer.midY = my;
+    if (pointer.active.size >= 2) {
+        const g = touchGesture();
+        if (g.n !== pointer.n) { beginGesture(e.timeStamp); return; }
+        const dx = g.cx - pointer.cx, dy = g.cy - pointer.cy;
+        if (g.n === 2) {
+            // Two fingers: move together to rotate, spread to zoom.
+            cam.pendA += dx * ROTATE_PER_PX;
+            cam.pendB += dy * ROTATE_PER_PX;
+            if (pointer.spread > 0 && g.spread > 0) {
+                cam.zoomTarget = clampZoom(cam.zoomTarget * g.spread / pointer.spread);
+                cam.zoom = cam.zoomTarget;
+            }
+        } else {
+            // Three or more fingers: pan, the content following the hand.
+            panBy(dx * dpr, -dy * dpr, true);
+        }
+        pointer.cx = g.cx; pointer.cy = g.cy; pointer.spread = g.spread;
+        pointer.lastMove = e.timeStamp;
         return;
     }
     const dx = e.clientX - pointer.lastX, dy = e.clientY - pointer.lastY;
@@ -1896,33 +1913,34 @@ function onPointerMove(e) {
 function onPointerUp(e) {
     if (!pointer.active.has(e.pointerId)) return;
     pointer.active.delete(e.pointerId);
-    if (pointer.dragging && pointer.active.size === 0) {
+    const left = pointer.active.size;
+    if (left === 0) {
         // Only glide if the pointer was still moving at release.
-        if (e.timeStamp - pointer.lastMove > 70) cam.velA = cam.velB = 0;
+        if (!pointer.dragging || e.timeStamp - pointer.lastMove > 70) cam.velA = cam.velB = 0;
         const max = 6;
         cam.velA = Math.max(-max, Math.min(max, cam.velA));
         cam.velB = Math.max(-max, Math.min(max, cam.velB));
-    }
-    if (pointer.active.size === 1) {
-        // From two fingers back to one: continue rotating from the
-        // remaining finger, without a jump.
+        pointer.dragging = pointer.panning = false;
+        canvas.classList.remove("dragging", "panning");
+    } else if (left === 1) {
+        // Back to one finger: keep rotating from it, without a jump.
         const [p] = pointer.active.values();
         pointer.dragging = true;
         pointer.lastX = p.x;
         pointer.lastY = p.y;
         pointer.lastMove = e.timeStamp;
         cam.velA = cam.velB = 0;
-    } else if (pointer.active.size === 0) {
-        pointer.dragging = pointer.panning = false;
-        canvas.classList.remove("dragging", "panning");
+    } else {
+        beginGesture(e.timeStamp);
     }
     noteInput();
 }
 
-/* Wheel: a mouse wheel zooms toward the cursor. A trackpad's two-finger
-   scroll pans and its pinch (sent as ctrl + wheel) zooms, as in maps and
-   design tools. Trackpad scrolls are recognised by their fine, pixel-sized
-   deltas; the guess sticks for the rest of a gesture. */
+/* Wheel: a mouse wheel zooms toward the cursor. On a trackpad, the
+   two-finger scroll rotates (like two fingers on a touch screen) and the
+   pinch, which browsers send as ctrl + wheel, zooms toward the cursor.
+   Shift + scroll pans. Trackpad scrolls are recognised by their fine,
+   pixel-sized deltas; the guess sticks for the rest of a gesture. */
 const wheel = { trackpad: false, last: 0 };
 function onWheel(e) {
     e.preventDefault();
@@ -1933,7 +1951,6 @@ function onWheel(e) {
     else if (e.deltaMode === 2) { dx *= height / dpr; dy *= height / dpr; }
 
     if (e.ctrlKey) {
-        // Trackpad pinch (and ctrl + wheel): smooth, proportional zoom.
         zoomAt(Math.exp(-Math.max(-50, Math.min(50, dy)) * 0.01), e.clientX, e.clientY, true);
         return;
     }
@@ -1943,9 +1960,14 @@ function onWheel(e) {
             (legacy ? Math.abs(legacy) !== 120 && legacy === -3 * e.deltaY : !Number.isInteger(dy) || Math.abs(dy) < 40));
     }
     wheel.last = e.timeStamp;
-    if (wheel.trackpad || e.shiftKey) {
-        if (e.shiftKey && !wheel.trackpad && dx === 0) { dx = dy; dy = 0; }
+    if (e.shiftKey) {
+        // Shift + scroll pans (browsers may already turn it into deltaX).
+        if (!wheel.trackpad && dx === 0) { dx = dy; dy = 0; }
         panBy(-dx * dpr, dy * dpr, true);
+    } else if (wheel.trackpad) {
+        cam.velA = cam.velB = 0;
+        cam.pendA -= dx * ROTATE_PER_PX;
+        cam.pendB -= dy * ROTATE_PER_PX;
     } else {
         dy = Math.max(-200, Math.min(200, dy));
         zoomAt(Math.exp(-dy * 0.0015), e.clientX, e.clientY, false);
@@ -2340,9 +2362,12 @@ function buildAttractorCards() {
         e.stopPropagation();
         const next = types[(i + d + types.length) % types.length];
         setAttractor(next);
-        grid.querySelector(`[data-type="${next}"]`).focus();
+        grid.querySelector(`[data-type="${next}"]`).focus({ preventScroll: true });
     });
+    grid.addEventListener("scroll", updateCardFades, { passive: true });
+    if (window.ResizeObserver) new ResizeObserver(sizeCardList).observe(grid);
     drawThumbs();
+    sizeCardList();
 }
 
 function markSelectedCard(type) {
@@ -2350,8 +2375,47 @@ function markSelectedCard(type) {
         const on = c.dataset.type === type;
         c.setAttribute("aria-checked", String(on));
         c.tabIndex = on ? 0 : -1;
-        if (on && isPhone()) c.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+        if (on) revealCard(c);
     });
+}
+
+/* Scroll the card list (only the list, never the panel) so card c is fully
+   visible, clear of the edge fades. */
+function revealCard(c) {
+    const grid = $("attractorGrid");
+    const g = grid.getBoundingClientRect(), r = c.getBoundingClientRect();
+    if (isPhone()) {
+        const m = 24;
+        if (r.left < g.left + m) grid.scrollBy({ left: r.left - g.left - m, behavior: "smooth" });
+        else if (r.right > g.right - m) grid.scrollBy({ left: r.right - g.right + m, behavior: "smooth" });
+    } else {
+        const m = 30;
+        if (r.top < g.top + m) grid.scrollBy({ top: r.top - g.top - m, behavior: "smooth" });
+        else if (r.bottom > g.bottom - m) grid.scrollBy({ top: r.bottom - g.bottom + m, behavior: "smooth" });
+    }
+}
+
+/* Desktop: the list shows two full rows and a glimpse of the third, which
+   fades out; fades appear at whichever edge has more cards beyond it. */
+function sizeCardList() {
+    const grid = $("attractorGrid"), card = grid.querySelector(".att-card");
+    if (!card) return;
+    if (isPhone()) {
+        grid.style.maxHeight = "";
+    } else {
+        const rowH = card.getBoundingClientRect().height, gap = 8;
+        grid.style.maxHeight = `${Math.round(2 * rowH + gap + 0.42 * rowH + 6)}px`;
+    }
+    updateCardFades();
+}
+
+function updateCardFades() {
+    const grid = $("attractorGrid");
+    const phone = isPhone();
+    const pos = phone ? grid.scrollLeft : grid.scrollTop;
+    const max = phone ? grid.scrollWidth - grid.clientWidth : grid.scrollHeight - grid.clientHeight;
+    grid.classList.toggle("fade-start", pos > 2);
+    grid.classList.toggle("fade-end", pos < max - 2);
 }
 
 function drawThumbs() {
