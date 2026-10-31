@@ -84,14 +84,17 @@
                     </div>
                     <div class="palette-row" id="paletteRow" role="radiogroup" aria-labelledby="paletteLabel"></div>
                 </div>
+                <div class="control">
+                    <div class="control-row">
+                        <label for="spinSpeed">Auto-rotate</label>
+                        <output id="spinSpeedVal" for="spinSpeed">1.2 rpm</output>
+                    </div>
+                    <input type="range" id="spinSpeed" min="0" max="6" step="0.1" value="1.2" />
+                </div>
                 <div class="switch-row">
                     <button class="switch" id="trailsSwitch" type="button" role="switch" aria-checked="true">
                         <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
                         Light trails
-                    </button>
-                    <button class="switch" id="spinSwitch" type="button" role="switch" aria-checked="true">
-                        <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
-                        Idle spin
                     </button>
                 </div>
             </section>
@@ -144,7 +147,7 @@
             <dt><kbd>Space</kbd></dt><dd>Pause or resume</dd>
             <dt><kbd>L</kbd></dt><dd>Surprise me: morph into a preset</dd>
             <dt><kbd>T</kbd></dt><dd>Light trails on or off</dd>
-            <dt><kbd>S</kbd></dt><dd>Idle spin on or off</dd>
+            <dt><kbd>S</kbd></dt><dd>Auto-rotate on or off</dd>
             <dt><kbd>R</kbd></dt><dd>Reset the view</dd>
             <dt><kbd>Enter</kbd></dt><dd>Restart particles</dd>
             <dt><kbd>H</kbd></dt><dd>Hide or show the controls</dd>

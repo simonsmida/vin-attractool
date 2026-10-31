@@ -459,12 +459,13 @@ const PARAM_LABELS = { sigma: "σ", rho: "ρ", beta: "β" };
 const PALETTE_SIZE = 32;
 
 const SCHEMES = {
-    // Slow particles take the first colour, fast ones the last.
-    spectrum: { label: "Spectrum", accent: "#8fc8ff", stops: ["#ff5a6e", "#ff9b4a", "#ffe066", "#5fe3a1", "#4cc3ff", "#8f7bff", "#e07bff"] },
-    aurora: { label: "Aurora", accent: "#6ff0c8", stops: ["#2b5cff", "#2fa8ff", "#3fe0d0", "#7dffb0", "#e9ffd6"] },
-    ember: { label: "Ember", accent: "#ffb15e", stops: ["#9e1b2f", "#e2453c", "#ff8a3d", "#ffc860", "#fff1cf"] },
-    orchid: { label: "Orchid", accent: "#f0a6ff", stops: ["#4b3bff", "#9b5cff", "#e46bff", "#ff8fc7", "#ffe1ee"] },
-    moonlight: { label: "Moonlight", accent: "#cfe0ff", stops: ["#3e5a8a", "#7f9cc8", "#c3d4f0", "#f4f8ff"] }
+    // Slow particles take the first colour, fast ones the last; the fastest
+    // read as highlights, so every palette ends light.
+    nocturne: { label: "Nocturne", accent: "#b9a2ff", stops: ["#2a2f7a", "#5446b8", "#9673e0", "#d79ad6", "#ffcfe4"] },
+    champagne: { label: "Champagne", accent: "#e6c48a", stops: ["#6b3f1d", "#a8692f", "#d6a35a", "#f0d39b", "#f8e6c2"] },
+    glacier: { label: "Glacier", accent: "#9fdcec", stops: ["#123b5c", "#1f6f96", "#4fb0cc", "#a6e1ec", "#d4f4fa"] },
+    aurora: { label: "Aurora", accent: "#7fe0bf", stops: ["#173f6b", "#1d7f86", "#3fbf9c", "#9fe6b8", "#d2f7dc"] },
+    prism: { label: "Prism", accent: "#9ec4ff", stops: ["#d9576b", "#e9925d", "#e9cc78", "#86cfa4", "#6faee3", "#9a86e6", "#d6c9ff"] }
 };
 
 function hexToRgb(hex) {
@@ -475,7 +476,7 @@ function hexToRgb(hex) {
 /* Returns PALETTE_SIZE colours as [r, g, b] in 0..255. */
 function buildPalette(scheme) {
     const out = [];
-    const { stops } = SCHEMES[scheme] || SCHEMES.spectrum;
+    const { stops } = SCHEMES[scheme] || SCHEMES.nocturne;
     for (let i = 0; i < PALETTE_SIZE; i++) {
         const t = i / (PALETTE_SIZE - 1);
         const seg = t * (stops.length - 1);
@@ -504,9 +505,10 @@ const state = {
     paused: false,
     trails: true,
     trailFade: 1,                     // eases toward trails ? 1 : 0
-    spin: true,
-    scheme: "spectrum",
-    palette: buildPalette("spectrum"),
+    spinRpm: 1.2,                     // auto-rotation speed, turns per minute
+    lastSpinRpm: 1.2,
+    scheme: "nocturne",
+    palette: buildPalette("nocturne"),
     sceneFade: 1,                     // dips to 0 while switching attractors
     pendingType: null,
     morph: null,                      // { from, to, t } while Lucky morphs
@@ -569,7 +571,6 @@ const cam = {
 let canvas, ctx = null, dpr = 1, width = 0, height = 0;
 // Dynamic resolution: the light buffer shrinks on slow GPUs and grows back
 // when there is headroom, so motion stays fluid on any machine.
-const quality = { scale: 1, slow: 0, fast: 0 };
 let dirty = true;
 const k1 = new Float64Array(3), k2 = new Float64Array(3), k3 = new Float64Array(3), k4 = new Float64Array(3);
 
@@ -1001,6 +1002,7 @@ ${GL_PROJECT}
 uniform float uSize, uAlpha;
 out vec3 vColor;
 out float vAlpha;
+out float vSize;
 void main() {
     vec4 p = fetchSample(gl_VertexID, 0);
     float depth;
@@ -1008,20 +1010,21 @@ void main() {
     gl_Position = vec4(s / uHalf, 0.0, 1.0);
     vColor = colorFor(p.w);
     vAlpha = uAlpha * mix(0.4, 1.0, depth);
-    gl_PointSize = uSize * mix(0.8, 1.15, depth);
+    vSize = uSize * mix(0.8, 1.15, depth);
+    gl_PointSize = vSize + 2.0;                    // room for the AA edge
 }`;
 
 const POINT_FS = `#version 300 es
 precision mediump float;
 in vec3 vColor;
 in float vAlpha;
+in float vSize;
 out vec4 outColor;
 void main() {
-    vec2 c = gl_PointCoord * 2.0 - 1.0;
-    float r2 = dot(c, c);
-    if (r2 > 1.0) discard;
-    // Solid dot with a soft rim.
-    float a = vAlpha * smoothstep(1.0, 0.35, sqrt(r2));
+    // Exact pixel coverage of a disc: sharp at any size.
+    float r = length(gl_PointCoord - 0.5) * (vSize + 2.0);
+    float a = vAlpha * clamp(vSize * 0.5 + 0.5 - r, 0.0, 1.0);
+    if (a <= 0.0) discard;
     outColor = vec4(vColor * a, a);
 }`;
 
@@ -1040,14 +1043,15 @@ uniform float uExposure, uFade;
 in vec2 vUv;
 out vec4 outColor;
 void main() {
-    vec3 hdr = max(texture(uScene, vUv).rgb, 0.0);
+    // One scene texel per screen pixel: no resampling, no blur.
+    vec3 hdr = max(texelFetch(uScene, ivec2(gl_FragCoord.xy), 0).rgb, 0.0);
     // Hue-preserving tone map: compress the brightest channel and scale the
     // others with it, so overlapping trails get brighter, never white.
     float m = max(hdr.r, max(hdr.g, hdr.b));
     vec3 c = m > 1e-5 ? hdr * ((1.0 - exp(-m * uExposure)) / m) : vec3(0.0);
     // Dither away banding in the faint tails.
     float n = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
-    c += (n - 0.5) / 255.0;
+    c += (n - 0.5) * (0.6 / 255.0);
     outColor = vec4(c * uFade, 1.0);
 }`;
 
@@ -1195,10 +1199,8 @@ function bindTex(unit, tex) {
 }
 
 function renderGL() {
-    const sw = Math.max(1, Math.round(width * quality.scale));
-    const sh = Math.max(1, Math.round(height * quality.scale));
+    const sw = width, sh = height;
     if (!glr.targets || glr.targets.scene.w !== sw || glr.targets.scene.h !== sh) glResizeTargets(sw, sh);
-    const rs = quality.scale;
     gl.activeTexture(gl.TEXTURE0);
     uploadHistory();
     const T = glr.targets;
@@ -1223,7 +1225,7 @@ function renderGL() {
             gl.useProgram(t.prog);
             setSceneUniforms(t.u, M);
             gl.uniform1i(t.u.uCount, count);
-            gl.uniform1f(t.u.uWidth, rs * dpr * 1.15 * Math.min(1.5, Math.sqrt(cam.zoom)));
+            gl.uniform1f(t.u.uWidth, dpr * Math.min(1.5, Math.sqrt(cam.zoom)));
             gl.uniform1f(t.u.uAlpha, 0.55 * density * state.trailFade);
             gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count * (hist.L - 1));
         }
@@ -1231,7 +1233,7 @@ function renderGL() {
         const p = glr.point;
         gl.useProgram(p.prog);
         setSceneUniforms(p.u, M);
-        gl.uniform1f(p.u.uSize, rs * dpr * Math.min(3.6, Math.max(2.2, 3.8 - count / 6000)) * Math.min(1.6, Math.sqrt(cam.zoom)));
+        gl.uniform1f(p.u.uSize, dpr * Math.min(2.8, Math.max(1.8, 3 - count / 8000)) * Math.min(1.6, Math.sqrt(cam.zoom)));
         gl.uniform1f(p.u.uAlpha, density * (1.0 - 0.3 * state.trailFade));
         gl.drawArrays(gl.POINTS, 0, count);
         gl.disable(gl.BLEND);
@@ -1351,23 +1353,11 @@ function frame(now) {
     if (moving || dirty) {
         render();
         dirty = false;
-        if (gl) adaptQuality(raw);
+
     }
     fpsTick(now);
 }
 
-function adaptQuality(frameTime) {
-    if (frameTime <= 0) return;
-    if (frameTime > 1 / 45) { quality.slow++; quality.fast = 0; }
-    else if (frameTime < 1 / 57) { quality.fast++; quality.slow = 0; }
-    if (quality.slow > 45 && quality.scale > 0.5) {
-        quality.scale = Math.max(0.5, quality.scale - 0.15);
-        quality.slow = 0;
-    } else if (quality.fast > 240 && quality.scale < 1) {
-        quality.scale = Math.min(1, quality.scale + 0.1);
-        quality.fast = 0;
-    }
-}
 
 /* Trails and attractor switches fade instead of popping. */
 function updateFades(dt) {
@@ -1453,9 +1443,10 @@ function updateCamera(dt, now) {
         moving = true;
     }
 
-    // Gentle turntable spin once the viewer has been idle for a moment.
+    // Steady turntable rotation; it yields while the viewer is steering and
+    // eases back in shortly after.
     const idle = (now - cam.lastInput) / 1000;
-    const spinTarget = state.spin && !pointer.dragging && !cam.reset && idle > 2.5 && Math.hypot(cam.velA, cam.velB) < 0.05 ? 0.14 : 0;
+    const spinTarget = state.spinRpm > 0 && !pointer.dragging && !cam.reset && idle > 1.2 && Math.hypot(cam.velA, cam.velB) < 0.05 ? state.spinRpm * Math.PI / 30 : 0;
     cam.spinRate += (spinTarget - cam.spinRate) * (1 - Math.exp(-dt * (spinTarget > cam.spinRate ? 0.8 : 6)));
     if (Math.abs(cam.spinRate) > 1e-4) { spinView(cam.spinRate * dt); moving = true; }
     else cam.spinRate = 0;
@@ -1698,9 +1689,22 @@ function toggleTrails() {
 }
 
 function toggleSpin() {
-    state.spin = !state.spin;
-    setPressed("spinSwitch", state.spin);
-    if (state.spin) cam.lastInput = performance.now() - 2000;
+    setSpin(state.spinRpm > 0 ? 0 : state.lastSpinRpm || 1.2);
+    showToast(state.spinRpm > 0 ? `Auto-rotate ${formatRpm(state.spinRpm)}` : "Auto-rotate off");
+}
+
+function formatRpm(rpm) {
+    return rpm > 0 ? `${rpm.toFixed(1)} rpm` : "Off";
+}
+
+function setSpin(rpm) {
+    state.spinRpm = rpm;
+    if (rpm > 0) {
+        state.lastSpinRpm = rpm;
+        cam.lastInput = Math.min(cam.lastInput, performance.now() - 1200);
+    }
+    setRange("spinSpeed", rpm);
+    $("spinSpeedVal").textContent = formatRpm(rpm);
 }
 
 /* Fade out, switch, fade back in. */
@@ -2064,7 +2068,7 @@ function setScheme(name) {
 
 /* The interface accent follows the palette. */
 function applyAccent() {
-    const hex = (SCHEMES[state.scheme] || SCHEMES.spectrum).accent;
+    const hex = (SCHEMES[state.scheme] || SCHEMES.nocturne).accent;
     const [r, g, b] = hexToRgb(hex);
     const root = document.documentElement.style;
     root.setProperty("--accent", hex);
@@ -2130,7 +2134,9 @@ function initUI() {
     $("luckyBtn").addEventListener("click", lucky);
     $("resetParamsBtn").addEventListener("click", resetParams);
     $("trailsSwitch").addEventListener("click", toggleTrails);
-    $("spinSwitch").addEventListener("click", toggleSpin);
+    setSpin(state.spinRpm);
+    $("spinSpeed").addEventListener("input", e => setSpin(parseFloat(e.target.value)));
+    $("spinSpeed").addEventListener("dblclick", () => setSpin(1.2));
     $("playBtn").addEventListener("click", togglePause);
     $("restartBtn").addEventListener("click", restartParticles);
     $("resetViewBtn").addEventListener("click", resetView);
@@ -2192,7 +2198,7 @@ function fpsTick(now) {
     if (!showFps) return;
     fpsFrames++;
     if (now - fpsLast > 500) {
-        $("fps").textContent = `${Math.round(fpsFrames * 1000 / (now - fpsLast))} fps · ${count} particles · ${gl ? (glr.hdr ? "WebGL2 HDR" : "WebGL2") : "Canvas 2D"} · ${Math.round(quality.scale * 100)}% res`;
+        $("fps").textContent = `${Math.round(fpsFrames * 1000 / (now - fpsLast))} fps · ${count} particles · ${gl ? (glr.hdr ? "WebGL2 HDR" : "WebGL2") : "Canvas 2D"} · ${width}×${height}px`;
         fpsFrames = 0;
         fpsLast = now;
     }
