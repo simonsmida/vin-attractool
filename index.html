@@ -22,7 +22,7 @@
 </head>
 
 <body>
-    <canvas id="canvas" aria-label="Animated attractor. Drag to rotate, scroll or pinch to zoom, double-click to reset the view."></canvas>
+    <canvas id="canvas" aria-label="Animated attractor. Drag to rotate, right-drag or two fingers to move, scroll or pinch to zoom, double-click to reset the view."></canvas>
 
     <aside class="panel" id="panel" aria-label="Controls">
         <header class="panel-head">
@@ -105,7 +105,7 @@
         </div>
 
         <footer class="panel-foot">
-            <span>Drag to rotate · Scroll to zoom</span>
+            <span>Drag rotates · Right-drag pans · Scroll zooms</span>
             <button class="text-btn" id="helpBtn" type="button">Shortcuts</button>
         </footer>
     </aside>
@@ -144,9 +144,11 @@
         </div>
         <dl class="keys">
             <dt><kbd>Drag</kbd></dt><dd>Rotate in any direction; let go while moving to glide</dd>
-            <dt><kbd>Scroll</kbd> <kbd>Pinch</kbd></dt><dd>Zoom</dd>
-            <dt><kbd>Double-click</kbd></dt><dd>Reset the view</dd>
-            <dt><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Rotate</dd>
+            <dt><kbd>Right-drag</kbd> <kbd>Shift</kbd>+<kbd>Drag</kbd></dt><dd>Move the view</dd>
+            <dt><kbd>Two fingers</kbd></dt><dd>Move the view on a trackpad or touch screen; pinch to zoom</dd>
+            <dt><kbd>Scroll</kbd></dt><dd>Zoom toward the cursor</dd>
+            <dt><kbd>Double-click</kbd></dt><dd>Reset the view (also centres it)</dd>
+            <dt><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Rotate; with <kbd>Shift</kbd>, move</dd>
             <dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>Zoom</dd>
             <dt><kbd>Space</kbd></dt><dd>Pause or resume</dd>
             <dt><kbd>L</kbd></dt><dd>Surprise me: morph into a preset</dd>

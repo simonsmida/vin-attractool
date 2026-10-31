@@ -99,6 +99,10 @@ svg .fill {
   cursor: grabbing;
 }
 
+#canvas.panning {
+  cursor: move;
+}
+
 /* ----------------------------------------------------------------- Panel */
 
 .panel {

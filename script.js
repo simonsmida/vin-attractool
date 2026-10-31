@@ -620,8 +620,12 @@ const cam = {
     spinRate: 0,                      // current idle spin (rad/s)
     zoom: 1,
     zoomTarget: 1,
-    offX: 0, offY: 0,                 // screen offset (device px) clearing the panel
+    offX: 0, offY: 0,                 // centre of the free screen area (device px, y up)
     offXTarget: 0, offYTarget: 0,
+    fitW: 1, fitH: 1,                 // size of the free area the attractor is fitted to
+    fitWTarget: 1, fitHTarget: 1,
+    panX: 0, panY: 0,                 // viewer's pan (device px, y up)
+    panXTarget: 0, panYTarget: 0,
     center: [0, 0, 0],
     radius: 1,
     reset: null,                      // { t, from } while animating
@@ -1087,10 +1091,14 @@ function viewMatrix() {
 
 /* Fit the attractor into the part of the screen the panel leaves free. */
 function frameScale() {
-    const w = Math.max(80, width - 2 * Math.abs(cam.offX));
-    const h = Math.max(80, height - 2 * Math.abs(cam.offY));
-    return 0.42 * Math.min(w, h) / cam.radius * cam.zoom;
+    const w = Math.max(80, cam.fitW), h = Math.max(80, cam.fitH);
+    return 0.45 * Math.min(w, h) / cam.radius * cam.zoom;
 }
+
+/* Where the attractor's centre sits on screen: the middle of the free area
+   plus the viewer's pan (device px from the screen centre, y up). */
+const screenOffX = () => cam.offX + cam.panX;
+const screenOffY = () => cam.offY + cam.panY;
 
 // --------------------------------------------------------------------------
 // WebGL 2 renderer
@@ -1395,7 +1403,7 @@ function setSceneUniforms(u, M) {
     gl.uniform1f(u.uCamDist, camDist);
     gl.uniform1f(u.uRadius, r);
     gl.uniform2f(u.uHalf, width / 2, height / 2);
-    gl.uniform2f(u.uOffset, cam.offX, cam.offY);
+    gl.uniform2f(u.uOffset, screenOffX(), screenOffY());
     gl.uniform1f(u.uTailCool, 0.5 * (1 - state.dyeMix));
     gl.uniform1f(u.uAlive, state.dyeMix);
     if (glr.paletteFor !== state.palette) {
@@ -1487,7 +1495,7 @@ function render2D() {
     const r = cam.radius;
     const camDist = 4.5 * r;
     const focal = frameScale() * camDist;
-    const ox = width / 2 + cam.offX, oy = height / 2 - cam.offY;
+    const ox = width / 2 + screenOffX(), oy = height / 2 - screenOffY();
     const css = state.palette.map(c => `rgb(${c[0]}, ${c[1]}, ${c[2]})`);
     const span = ref.speedHi - ref.speedLo;
     const proj = (x, y, z) => {
@@ -1666,7 +1674,11 @@ function updateCamera(dt, now) {
         const rate = 1.6;
         const ka = (keysDown.has("ArrowRight") ? 1 : 0) - (keysDown.has("ArrowLeft") ? 1 : 0);
         const kb = (keysDown.has("ArrowDown") ? 1 : 0) - (keysDown.has("ArrowUp") ? 1 : 0);
-        if (ka || kb) { rotateView(ka * rate * dt, kb * rate * dt); moving = true; cam.lastInput = now; }
+        if ((ka || kb) && keysDown.has("Shift")) {
+            const v = 0.6 * Math.min(width, height) * dt;
+            panBy(-ka * v, kb * v, true);
+            cam.lastInput = now;
+        } else if (ka || kb) { rotateView(ka * rate * dt, kb * rate * dt); moving = true; cam.lastInput = now; }
         if (keysDown.has("+")) cam.zoomTarget = clampZoom(cam.zoomTarget * Math.exp(1.4 * dt));
         if (keysDown.has("-")) cam.zoomTarget = clampZoom(cam.zoomTarget * Math.exp(-1.4 * dt));
     }
@@ -1718,6 +1730,24 @@ function updateCamera(dt, now) {
         cam.offX = cam.offXTarget;
         cam.offY = cam.offYTarget;
     }
+    if (Math.abs(cam.fitWTarget - cam.fitW) > 0.3 || Math.abs(cam.fitHTarget - cam.fitH) > 0.3) {
+        cam.fitW += (cam.fitWTarget - cam.fitW) * oe;
+        cam.fitH += (cam.fitHTarget - cam.fitH) * oe;
+        moving = true;
+    } else {
+        cam.fitW = cam.fitWTarget;
+        cam.fitH = cam.fitHTarget;
+    }
+    // Pan eases at the zoom's rate, so zooming toward the cursor stays put.
+    if (Math.abs(cam.panXTarget - cam.panX) > 0.05 || Math.abs(cam.panYTarget - cam.panY) > 0.05) {
+        const pe = 1 - Math.exp(-dt * 10);
+        cam.panX += (cam.panXTarget - cam.panX) * pe;
+        cam.panY += (cam.panYTarget - cam.panY) * pe;
+        moving = true;
+    } else {
+        cam.panX = cam.panXTarget;
+        cam.panY = cam.panYTarget;
+    }
 
     // Framing follows the attractor when parameters change.
     const ease = 1 - Math.exp(-dt * 3);
@@ -1741,24 +1771,65 @@ function resetView() {
     cam.velA = cam.velB = cam.pendA = cam.pendB = 0;
     cam.reset = { t: 0, from: cam.q.slice() };
     cam.zoomTarget = 1;
+    cam.panXTarget = cam.panYTarget = 0;
     cam.lastInput = performance.now();
 }
 
+/* Keep at least part of the attractor on screen however far it is moved. */
+function clampPan(v, half) {
+    const lim = half + 0.6 * frameScale() * cam.radius / cam.zoom * cam.zoomTarget;
+    return Math.max(-lim, Math.min(lim, v));
+}
+
+/* Move the view by (dx, dy) device px, y up. Immediate follows the finger;
+   otherwise it eases (keyboard, wheel). */
+function panBy(dx, dy, immediate) {
+    cam.panXTarget = clampPan(cam.panXTarget + dx, width / 2);
+    cam.panYTarget = clampPan(cam.panYTarget + dy, height / 2);
+    if (immediate) { cam.panX = cam.panXTarget; cam.panY = cam.panYTarget; }
+}
+
+/* Zoom by factor k about a screen point (CSS px from the viewport's
+   top-left), so the spot under the cursor or fingers stays put. */
+function zoomAt(k, clientX, clientY, immediate) {
+    const z0 = cam.zoomTarget, z1 = clampZoom(z0 * k), s = z1 / z0;
+    const px = clientX * dpr - width / 2, py = height / 2 - clientY * dpr;
+    const ox = cam.offXTarget + cam.panXTarget, oy = cam.offYTarget + cam.panYTarget;
+    cam.zoomTarget = z1;
+    cam.panXTarget = clampPan(px - (px - ox) * s - cam.offXTarget, width / 2);
+    cam.panYTarget = clampPan(py - (py - oy) * s - cam.offYTarget, height / 2);
+    if (immediate) {
+        cam.zoom = z1;
+        cam.panX = cam.panXTarget;
+        cam.panY = cam.panYTarget;
+    }
+}
+
 // --------------------------------------------------------------------------
-// Pointer input: one pointer rotates, two pointers pinch-zoom.
+// Pointer input. One finger or the left button rotates; two fingers pinch
+// to zoom and move together to pan; the right or middle button, or
+// Shift + left drag, pans with a mouse.
 // --------------------------------------------------------------------------
 
 const pointer = {
     active: new Map(),               // pointerId -> {x, y}
-    dragging: false,
+    dragging: false,                 // rotating
+    panning: false,                  // panning with a mouse button
     lastX: 0, lastY: 0, lastMove: 0,
-    pinchDist: 0,
+    pinchDist: 0, midX: 0, midY: 0,
     lastTap: 0
 };
 const ROTATE_PER_PX = 0.0055;
 
 function noteInput() {
     cam.lastInput = performance.now();
+}
+
+function startTwoFinger() {
+    const [a, b] = pointer.active.values();
+    pointer.pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+    pointer.midX = (a.x + b.x) / 2;
+    pointer.midY = (a.y + b.y) / 2;
 }
 
 function onPointerDown(e) {
@@ -1769,19 +1840,27 @@ function onPointerDown(e) {
     if (pointer.active.size === 1) {
         // Grabbing stops any glide, like catching a spinning globe.
         cam.velA = cam.velB = 0;
-        pointer.dragging = true;
         pointer.lastX = e.clientX;
         pointer.lastY = e.clientY;
         pointer.lastMove = e.timeStamp;
-        canvas.classList.add("dragging");
+        const panButton = e.pointerType === "mouse" && (e.button === 1 || e.button === 2 || e.shiftKey);
+        if (panButton) {
+            e.preventDefault();
+            pointer.panning = true;
+            canvas.classList.add("panning");
+        } else {
+            pointer.dragging = true;
+            canvas.classList.add("dragging");
+        }
         if (e.pointerType === "touch") {
             if (e.timeStamp - pointer.lastTap < 300) resetView();
             pointer.lastTap = e.timeStamp;
         }
     } else if (pointer.active.size === 2) {
-        pointer.dragging = false;
-        cam.velA = cam.velB = 0;
-        pointer.pinchDist = pinchDistance();
+        pointer.dragging = pointer.panning = false;
+        cam.velA = cam.velB = cam.pendA = cam.pendB = 0;
+        canvas.classList.remove("dragging", "panning");
+        startTwoFinger();
     }
 }
 
@@ -1791,19 +1870,27 @@ function onPointerMove(e) {
     noteInput();
 
     if (pointer.active.size === 2) {
-        const d = pinchDistance();
-        if (pointer.pinchDist > 0 && d > 0) {
-            cam.zoomTarget = clampZoom(cam.zoomTarget * d / pointer.pinchDist);
-        }
+        // Pinch zooms about the fingers' midpoint while the midpoint's
+        // travel pans, so the content stays under the fingers.
+        const [a, b] = pointer.active.values();
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        panBy((mx - pointer.midX) * dpr, -(my - pointer.midY) * dpr, true);
+        if (pointer.pinchDist > 0 && d > 0) zoomAt(d / pointer.pinchDist, mx, my, true);
         pointer.pinchDist = d;
+        pointer.midX = mx;
+        pointer.midY = my;
         return;
     }
-    if (!pointer.dragging) return;
-    cam.pendA += (e.clientX - pointer.lastX) * ROTATE_PER_PX;
-    cam.pendB += (e.clientY - pointer.lastY) * ROTATE_PER_PX;
+    const dx = e.clientX - pointer.lastX, dy = e.clientY - pointer.lastY;
     pointer.lastX = e.clientX;
     pointer.lastY = e.clientY;
     pointer.lastMove = e.timeStamp;
+    if (pointer.panning) panBy(dx * dpr, -dy * dpr, true);
+    else if (pointer.dragging) {
+        cam.pendA += dx * ROTATE_PER_PX;
+        cam.pendB += dy * ROTATE_PER_PX;
+    }
 }
 
 function onPointerUp(e) {
@@ -1817,35 +1904,52 @@ function onPointerUp(e) {
         cam.velB = Math.max(-max, Math.min(max, cam.velB));
     }
     if (pointer.active.size === 1) {
-        // Back from pinch to rotate: continue from the remaining finger.
+        // From two fingers back to one: continue rotating from the
+        // remaining finger, without a jump.
         const [p] = pointer.active.values();
         pointer.dragging = true;
         pointer.lastX = p.x;
         pointer.lastY = p.y;
         pointer.lastMove = e.timeStamp;
+        cam.velA = cam.velB = 0;
     } else if (pointer.active.size === 0) {
-        pointer.dragging = false;
-        canvas.classList.remove("dragging");
+        pointer.dragging = pointer.panning = false;
+        canvas.classList.remove("dragging", "panning");
     }
     noteInput();
 }
 
-function pinchDistance() {
-    const [a, b] = pointer.active.values();
-    return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
+/* Wheel: a mouse wheel zooms toward the cursor. A trackpad's two-finger
+   scroll pans and its pinch (sent as ctrl + wheel) zooms, as in maps and
+   design tools. Trackpad scrolls are recognised by their fine, pixel-sized
+   deltas; the guess sticks for the rest of a gesture. */
+const wheel = { trackpad: false, last: 0 };
 function onWheel(e) {
     e.preventDefault();
     noteInput();
-    // Normalise line/page deltas to pixels so mice and trackpads match.
-    let dy = e.deltaY;
-    if (e.deltaMode === 1) dy *= 16;
-    else if (e.deltaMode === 2) dy *= height / dpr;
-    // Trackpad pinch arrives as ctrl+wheel with small deltas.
-    const k = e.ctrlKey ? 0.01 : 0.0015;
-    dy = Math.max(-200, Math.min(200, dy));
-    cam.zoomTarget = clampZoom(cam.zoomTarget * Math.exp(-dy * k));
+    cam.reset = null;
+    let dx = e.deltaX, dy = e.deltaY;
+    if (e.deltaMode === 1) { dx *= 16; dy *= 16; }
+    else if (e.deltaMode === 2) { dx *= height / dpr; dy *= height / dpr; }
+
+    if (e.ctrlKey) {
+        // Trackpad pinch (and ctrl + wheel): smooth, proportional zoom.
+        zoomAt(Math.exp(-Math.max(-50, Math.min(50, dy)) * 0.01), e.clientX, e.clientY, true);
+        return;
+    }
+    if (e.timeStamp - wheel.last > 250) {
+        const legacy = e.wheelDeltaY;
+        wheel.trackpad = e.deltaMode === 0 && (dx !== 0 ||
+            (legacy ? Math.abs(legacy) !== 120 && legacy === -3 * e.deltaY : !Number.isInteger(dy) || Math.abs(dy) < 40));
+    }
+    wheel.last = e.timeStamp;
+    if (wheel.trackpad || e.shiftKey) {
+        if (e.shiftKey && !wheel.trackpad && dx === 0) { dx = dy; dy = 0; }
+        panBy(-dx * dpr, dy * dpr, true);
+    } else {
+        dy = Math.max(-200, Math.min(200, dy));
+        zoomAt(Math.exp(-dy * 0.0015), e.clientX, e.clientY, false);
+    }
 }
 
 // --------------------------------------------------------------------------
@@ -1860,6 +1964,7 @@ function isTyping(e) {
 function onKeyDown(e) {
     if (isTyping(e) || e.metaKey || e.ctrlKey || e.altKey) return;
     noteInput();
+    if (e.key === "Shift") { keysDown.add("Shift"); return; }
 
     if (e.code === "Space") {
         e.preventDefault();
@@ -1976,6 +2081,7 @@ function applyAttractor(type) {
     cam.velA = cam.velB = cam.pendA = cam.pendB = 0;
     cam.reset = null;
     cam.zoom = cam.zoomTarget = 1;
+    cam.panX = cam.panY = cam.panXTarget = cam.panYTarget = 0;
     applyRecommended(type);
     // Each attractor opens in the palette that suits it, until the viewer
     // picks one themselves.
@@ -2372,22 +2478,34 @@ function toggleSheet() {
     updateLayout();
 }
 
-/* Keep the attractor centred in the space the controls leave free. */
+/* Keep the attractor centred in, and fitted to, the part of the screen the
+   controls leave free: below the dock and above the sheet on phones, right
+   of the panel and above the dock on wider screens. */
 function updateLayout() {
-    const panel = $("panel");
-    let offX = 0, offY = 0;
+    const panel = $("panel"), dock = document.querySelector(".dock");
+    const W = window.innerWidth, H = window.innerHeight, m = 12;
+    let left = 0, top = 0, right = W, bottom = H, shift = 0;
     if (isPhone()) {
         panel.classList.remove("collapsed");
         panel.inert = false;
         $("showPanelBtn").hidden = true;
-        const covered = window.innerHeight - panel.getBoundingClientRect().top;
-        offY = covered / 2;
-    } else if (!panel.classList.contains("collapsed")) {
-        offX = panel.getBoundingClientRect().right / 2;
+        top = dock ? dock.getBoundingClientRect().bottom + m : 0;
+        bottom = panel.getBoundingClientRect().top - m;
+    } else {
+        if (!panel.classList.contains("collapsed")) {
+            left = panel.getBoundingClientRect().right;
+            shift = left / 2;
+        }
+        // The dock is short and centred; only trim the bottom margin a bit.
+        if (dock) bottom = dock.getBoundingClientRect().top;
+        top = H - bottom;
     }
-    document.documentElement.style.setProperty("--dock-shift", `${offX}px`);
-    cam.offXTarget = offX * dpr;
-    cam.offYTarget = offY * dpr;
+    document.documentElement.style.setProperty("--dock-shift", `${shift}px`);
+    const w = Math.max(60, right - left), h = Math.max(60, bottom - top);
+    cam.offXTarget = ((left + right) / 2 - W / 2) * dpr;
+    cam.offYTarget = (H / 2 - (top + bottom) / 2) * dpr;
+    cam.fitWTarget = w * dpr;
+    cam.fitHTarget = h * dpr;
 }
 
 function openHelp() {
@@ -2443,6 +2561,8 @@ function initUI() {
     canvas.addEventListener("wheel", onWheel, { passive: false });
     canvas.addEventListener("dblclick", resetView);
     canvas.addEventListener("contextmenu", e => e.preventDefault());
+    // Middle-button drag pans; stop the browser's autoscroll from starting.
+    canvas.addEventListener("mousedown", e => { if (e.button === 1) e.preventDefault(); });
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     window.addEventListener("blur", () => keysDown.clear());
@@ -2490,6 +2610,10 @@ window.addEventListener("DOMContentLoaded", () => {
     applyAttractor(state.type);
     cam.offX = cam.offXTarget;
     cam.offY = cam.offYTarget;
+    cam.fitW = cam.fitWTarget;
+    cam.fitH = cam.fitHTarget;
+    // The sheet's height changes with its content (equations, sliders).
+    if (window.ResizeObserver) new ResizeObserver(() => updateLayout()).observe($("panel"));
     cam.lastInput = performance.now();
     requestAnimationFrame(frame);
 });
