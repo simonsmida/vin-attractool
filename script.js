@@ -40,6 +40,7 @@
 const ATTRACTORS = {
     lorenz: {
         name: "Lorenz",
+        palette: "inferno",                // suggested palette
         params: { sigma: 10, rho: 28, beta: 8 / 3 },
         // ρ is the main control: fixed points below 24.74, chaos above,
         // with periodic windows near 99.96 and beyond.
@@ -81,6 +82,7 @@ const ATTRACTORS = {
     },
     rossler: {
         name: "Rössler",
+        palette: "orchid",                // suggested palette
         params: { a: 0.2, b: 0.2, c: 5.7 },
         // c drives the period-doubling route to chaos; orbits escape for
         // a ≳ 0.39.
@@ -123,6 +125,7 @@ const ATTRACTORS = {
     },
     halvorsen: {
         name: "Halvorsen",
+        palette: "viridis",                // suggested palette
         // Sprott's value. The often-quoted a = 1.89 settles onto a periodic
         // orbit (largest Lyapunov exponent ≈ 0); orbits escape for a < 1.25.
         params: { a: 1.27 },
@@ -161,6 +164,7 @@ const ATTRACTORS = {
     },
     aizawa: {
         name: "Aizawa",
+        palette: "glacier",                // suggested palette
         params: { a: 0.95, b: 0.7, c: 0.6, d: 3.5, e: 0.25, f: 0.1 },
         ranges: {
             a: { min: 0, max: 2, step: 0.01 },
@@ -207,6 +211,7 @@ const ATTRACTORS = {
     },
     arneodo: {
         name: "Arneodo",
+        palette: "fluoro",                // suggested palette
         // A "jerk" system: one cubic third-order equation x''' = f(x, x', x'').
         params: { a: 5.5, b: 3.5, c: 1 },
         ranges: {
@@ -241,6 +246,7 @@ const ATTRACTORS = {
     },
     burke: {
         name: "Burke–Shaw",
+        palette: "rainbow",                // suggested palette
         params: { s: 10, v: 4.272 },
         ranges: {
             s: { min: 7, max: 14, step: 0.01 },
@@ -272,6 +278,7 @@ const ATTRACTORS = {
     },
     chenlee: {
         name: "Chen–Lee",
+        palette: "glacier",                // suggested palette
         params: { a: 5, b: 10, c: 0.38 },
         ranges: {
             a: { min: 3.5, max: 6.5, step: 0.01 },
@@ -304,6 +311,7 @@ const ATTRACTORS = {
     },
     newton: {
         name: "Newton–Leipnik",
+        palette: "orchid",                // suggested palette
         short: "Newton–Leipnik",
         // Two coexisting strange attractors; particles stay on the one the
         // reference orbit finds from the seed.
@@ -338,6 +346,7 @@ const ATTRACTORS = {
     },
     tsucs: {
         name: "Three-scroll",
+        palette: "inferno",                // suggested palette
         // TSUCS1, the three-scroll unified chaotic system.
         params: { a: 40, k: 55, f: 20, c: 1.833, d: 0.16, e: 0.65 },
         ranges: {
@@ -379,6 +388,7 @@ const ATTRACTORS = {
     },
     anishchenko: {
         name: "Anishchenko–Astakhov",
+        palette: "viridis",                // suggested palette
         short: "Anishchenko",
         // An electronic oscillator with inertial non-linearity; I(x) is a
         // switch, so the flow is piecewise smooth.
@@ -414,6 +424,7 @@ const ATTRACTORS = {
     },
     finance: {
         name: "Finance",
+        palette: "rainbow",                // suggested palette
         // Ma–Chen model: x interest rate, y investment demand, z price index.
         params: { a: 0.001, b: 0.2, c: 1.1 },
         ranges: {
@@ -464,11 +475,11 @@ const SCHEMES = {
     // scientific maps follow matplotlib's perceptually uniform colormaps,
     // minus their near-black ends, which would vanish against the sky.
     inferno: { label: "Inferno", accent: "#fca50a", stops: ["#57106e", "#8a226a", "#bc3754", "#e45a31", "#f98e09", "#fbc228", "#f6e95c"] },
-    plasma: { label: "Plasma", accent: "#f0609a", stops: ["#5402a3", "#8b0aa5", "#b83289", "#db5c68", "#f48849", "#febd2a", "#f0f921"] },
+    glacier: { label: "Glacier", accent: "#3fb8ff", stops: ["#2a1fb8", "#2f4fff", "#1f8cff", "#00c2ff", "#3ff0ff", "#a8fff4"] },
     viridis: { label: "Viridis", accent: "#35b779", stops: ["#46327e", "#365c8d", "#277f8e", "#1fa187", "#4ac16d", "#a0da39", "#fde725"] },
+    orchid: { label: "Orchid", accent: "#ff4fb8", stops: ["#4b0fa8", "#8a10d0", "#c21ad6", "#f02aa8", "#ff5a7e", "#ff9a6a"] },
     rainbow: { label: "Rainbow", accent: "#8ab4ff", oklch: { l: [0.64, 0.8], c: 0.22, h: [25, 320] } },
-    fluoro: { label: "Fluorescent", accent: "#39ff88", stops: ["#ff00b8", "#b300ff", "#4a4dff", "#00e5ff", "#00ff9c", "#b6ff00"] },
-    aurora: { label: "Aurora", accent: "#2ef2b0", stops: ["#2340ff", "#0098ff", "#00d9e0", "#2ef2a0", "#b8ff4a"] }
+    fluoro: { label: "Fluorescent", accent: "#39ff88", stops: ["#ff00b8", "#b300ff", "#4a4dff", "#00e5ff", "#00ff9c", "#b6ff00"] }
 };
 
 function hexToRgb(hex) {
@@ -547,9 +558,10 @@ const state = {
     paused: false,
     trails: true,
     trailFade: 1,                     // eases toward trails ? 1 : 0
-    flow: false,                      // colour flow instead of colour by speed
-    flowMix: 0,                       // eases toward flow ? 1 : 0
-    flowTime: 0,
+    colorBy: "dye",                   // "dye" (carried by the flow) or "speed"
+    dyeMix: 1,                        // eases toward colorBy === "dye" ? 1 : 0
+    dyeClock: 0,                      // real-time seconds of simulated flow
+    userPalette: false,               // the viewer picked a palette themselves
     spinRpm: 1.2,                     // auto-rotation speed, turns per minute
     lastSpinRpm: 1.2,
     scheme: "inferno",
@@ -566,6 +578,7 @@ const px = new Float64Array(MAX_PARTICLES);
 const py = new Float64Array(MAX_PARTICLES);
 const pz = new Float64Array(MAX_PARTICLES);
 const pSpeed = new Float32Array(MAX_PARTICLES);
+const pDye = new Float32Array(MAX_PARTICLES);   // dye concentration, 0..1
 let count = 0;
 
 /*
@@ -586,6 +599,7 @@ const hist = {
 
 // Reference orbit: samples on the attractor plus its framing.
 const REF_SAMPLES = 4096;
+const THUMB_SAMPLES = 40000;     // dense enough that thumbnail strokes read as curves
 const ref = {
     pts: new Float64Array(REF_SAMPLES * 3),
     n: 0,
@@ -594,6 +608,7 @@ const ref = {
     escape: 1e3,
     speedLo: 0,
     speedHi: 1,
+    speedMax: 1,
     status: "ok"                      // ok | diverges | fixed
 };
 
@@ -624,6 +639,99 @@ const k1 = new Float64Array(3), k2 = new Float64Array(3), k3 = new Float64Array(
 // --------------------------------------------------------------------------
 
 /* Advance every particle by simulation time T using equal RK4 steps. */
+/* Dye: each particle carries a colour. A plane through the attractor's
+   centre turns slowly, and every particle that crosses it is repainted with
+   the current paint colour, which itself drifts slowly through the palette.
+   So a particle's colour records when it last crossed the plane (a turning
+   Poincaré section): fresh colour enters at the plane, rides the flow, and
+   chaos stretches and folds it into filaments. */
+const DYE_CYCLE = 9;                  // seconds for the paint to sweep the palette and back
+const DYE_LO = 0.22;                  // paint skips the palette's darkest end
+const dyeAxis = new Float64Array(4);  // plane normal x, y, z; current paint
+function updateDyeField() {
+    const c = state.dyeClock;
+    const th = 2 * Math.PI * c / 47, ph = 0.6 * Math.sin(2 * Math.PI * c / 71);
+    dyeAxis[0] = Math.cos(th) * Math.cos(ph);
+    dyeAxis[1] = Math.sin(th) * Math.cos(ph);
+    dyeAxis[2] = Math.sin(ph);
+    const f = (c / DYE_CYCLE) % 1;
+    dyeAxis[3] = DYE_LO + (1 - DYE_LO) * (1 - Math.abs(2 * f - 1));
+}
+/* Signed distance to the paint plane, in attractor radii. */
+function dyePlane(x, y, z) {
+    const c = ref.center;
+    return ((x - c[0]) * dyeAxis[0] + (y - c[1]) * dyeAxis[1] + (z - c[2]) * dyeAxis[2]) / ref.radius;
+}
+/* Starting colours: a gradient across the plane, so the full palette shows
+   at once and then gets wound up by the flow. */
+function dyeStart(x, y, z) {
+    return Math.max(DYE_LO, Math.min(1, 0.6 + 0.6 * dyePlane(x, y, z)));
+}
+/* Fireflies: every particle is a little oscillator that flashes once per
+   cycle. Each one is pulled toward the average phase of the particles
+   currently near it (Kuramoto coupling on a coarse spatial grid), while
+   their natural rhythms differ slightly. Near the coupling threshold this
+   gives partial, ever-changing synchrony: clusters fall into step, waves of
+   light travel along the streams and dissolve again as chaos mixes the
+   swarm. The coupling also breathes slowly, so the collective drifts
+   between shimmering and pulsing in unison. */
+const pPhase = new Float32Array(MAX_PARTICLES);
+const pOmega = new Float32Array(MAX_PARTICLES);
+const pFlash = new Uint8Array(MAX_PARTICLES);
+const FF_GRID = 16;
+const FF_K = [1.15, 0.6];              // coupling: mean, breathing amplitude
+const ffCos = new Float32Array(FF_GRID ** 3), ffSin = new Float32Array(FF_GRID ** 3), ffN = new Float32Array(FF_GRID ** 3);
+const ffBin = new Uint16Array(MAX_PARTICLES);
+let ffClock = 0;
+function initFirefly(i) {
+    pPhase[i] = Math.random() * 2 * Math.PI;
+    // ~0.6 flashes per second, with a spread of rhythms.
+    const g = (Math.random() + Math.random() + Math.random() - 1.5) / 1.5;
+    pOmega[i] = 2 * Math.PI * (0.6 + 0.3 * g);
+}
+function updateFireflies(dt) {
+    if (dt <= 0 || count === 0) return;
+    ffClock += dt;
+    const K = FF_K[0] + FF_K[1] * Math.sin(2 * Math.PI * ffClock / 34);
+    const c = ref.center, inv = FF_GRID / (2.2 * ref.radius), G = FF_GRID;
+    ffCos.fill(0); ffSin.fill(0); ffN.fill(0);
+    for (let i = 0; i < count; i++) {
+        const gx = Math.min(G - 1, Math.max(0, ((px[i] - c[0]) * inv + G / 2) | 0));
+        const gy = Math.min(G - 1, Math.max(0, ((py[i] - c[1]) * inv + G / 2) | 0));
+        const gz = Math.min(G - 1, Math.max(0, ((pz[i] - c[2]) * inv + G / 2) | 0));
+        const b = (gx * G + gy) * G + gz;
+        ffBin[i] = b;
+        ffCos[b] += Math.cos(pPhase[i]);
+        ffSin[b] += Math.sin(pPhase[i]);
+        ffN[b]++;
+    }
+    const TAU = 2 * Math.PI;
+    for (let i = 0; i < count; i++) {
+        const b = ffBin[i];
+        // Kuramoto: dθ/dt = ω + K·R·sin(ψ − θ), with R·e^{iψ} the mean
+        // phasor of the bin, i.e. (Σcos, Σsin) / N.
+        let th = pPhase[i];
+        th += (pOmega[i] + K * (ffSin[b] * Math.cos(th) - ffCos[b] * Math.sin(th)) / ffN[b]) * dt;
+        if (th > TAU) th -= TAU;
+        pPhase[i] = th;
+        const f = 0.5 + 0.5 * Math.cos(th);
+        pFlash[i] = Math.round(255 * f * f * f * f);
+    }
+}
+
+/* Palette coordinate of particle i: speed, dye, or a blend while switching. */
+function colorT(i) {
+    const span = ref.speedHi - ref.speedLo;
+    let t = (Math.log(pSpeed[i] + 1e-9) - ref.speedLo) / span;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    return t + (pDye[i] - t) * state.dyeMix;
+}
+
+/* Palette coordinate and flash level packed for the history (see shader). */
+function packedT(i) {
+    return colorT(i) + 2 * pFlash[i];
+}
+
 function integrate(T) {
     const A = ATTRACTORS[state.type];
     const p = state.params[state.type];
@@ -632,10 +740,15 @@ function integrate(T) {
     const h = T / n;
     const h2 = h / 2, h6 = h / 6;
     const esc2 = ref.escape * ref.escape;
+    const vMax = ref.n > 0 ? 8 * Math.exp(ref.speedHi) : Infinity;
     const cx = ref.center[0], cy = ref.center[1], cz = ref.center[2];
+    state.dyeClock += T / A.timeScale;
+    updateDyeField();
+    const paint = dyeAxis[3], n0 = dyeAxis[0], n1 = dyeAxis[1], n2 = dyeAxis[2];
 
     for (let i = 0; i < count; i++) {
         let x = px[i], y = py[i], z = pz[i];
+        const px0 = x, py0 = y, pz0 = z;
         for (let s = 0; s < n; s++) {
             f(x, y, z, p, k1);
             f(x + h2 * k1[0], y + h2 * k1[1], z + h2 * k1[2], p, k2);
@@ -646,13 +759,18 @@ function integrate(T) {
             z += h6 * (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2]);
         }
         const dx = x - cx, dy = y - cy, dz = z - cz;
-        // Non-finite values fail this comparison too.
-        if (!(dx * dx + dy * dy + dz * dz < esc2)) {
+        // Off the attractor (or non-finite, which fails both tests): far
+        // outside its extent, or moving much faster than anything on it.
+        if (!(dx * dx + dy * dy + dz * dz < esc2) || !(Math.hypot(k1[0], k1[1], k1[2]) < vMax)) {
             spawn(i);
             continue;
         }
         px[i] = x; py[i] = y; pz[i] = z;
         pSpeed[i] = Math.hypot(k1[0], k1[1], k1[2]);
+        // Crossed the paint plane during this step: pick up the paint.
+        const before = (px0 - cx) * n0 + (py0 - cy) * n1 + (pz0 - cz) * n2;
+        const after = dx * n0 + dy * n1 + dz * n2;
+        if ((before < 0) !== (after < 0)) pDye[i] = paint;
     }
 }
 
@@ -675,7 +793,7 @@ function advance(T) {
 
 /* Place particle i on the attractor: a random reference sample plus a tiny
    offset, which chaos spreads along the attractor within seconds. */
-function spawn(i) {
+function spawn(i, initial = false) {
     const A = ATTRACTORS[state.type];
     if (ref.n > 0) {
         const j = (Math.random() * ref.n) | 0;
@@ -688,12 +806,17 @@ function spawn(i) {
         py[i] = A.seed[1] + (Math.random() - 0.5);
         pz[i] = A.seed[2] + (Math.random() - 0.5);
     }
-    pSpeed[i] = 0;
+    const f = ATTRACTORS[state.type].deriv;
+    f(px[i], py[i], pz[i], state.params[state.type], k1);
+    pSpeed[i] = Math.hypot(k1[0], k1[1], k1[2]);
+    pDye[i] = initial ? dyeStart(px[i], py[i], pz[i]) : dyeAxis[3];
+    if (initial || pOmega[i] === 0) initFirefly(i);
     resetHistory(i);
 }
 
 function spawnAll() {
-    for (let i = 0; i < count; i++) spawn(i);
+    updateDyeField();
+    for (let i = 0; i < count; i++) spawn(i, true);
     dirty = true;
 }
 
@@ -705,7 +828,7 @@ function computeReference() {
 
 /* Long orbit after the transient: REF_SAMPLES points and their speeds, or
    null if every attempt escaped to infinity. */
-function sampleOrbit(A, p) {
+function sampleOrbit(A, p, samples = REF_SAMPLES) {
     const f = A.deriv;
     const h = A.h;
     const out = new Float64Array(3);
@@ -725,10 +848,10 @@ function sampleOrbit(A, p) {
         // Discard the transient (about 60 time units), then sample ~200 more.
         const transient = Math.ceil((A.transient || 60) / h);
         for (let s = 0; s < transient; s++) if (!step()) return null;
-        const stride = Math.max(1, Math.round((A.span || 200) / h / REF_SAMPLES));
-        const pts = new Float64Array(REF_SAMPLES * 3);
-        const speeds = new Float32Array(REF_SAMPLES);
-        for (let j = 0; j < REF_SAMPLES; j++) {
+        const stride = Math.max(1, Math.round((A.span || 200) / h / samples));
+        const pts = new Float64Array(samples * 3);
+        const speeds = new Float32Array(samples);
+        for (let j = 0; j < samples; j++) {
             for (let s = 0; s < stride; s++) if (!step()) return null;
             pts[3 * j] = x; pts[3 * j + 1] = y; pts[3 * j + 2] = z;
             f(x, y, z, p, out);
@@ -778,10 +901,14 @@ function applyReference(res) {
     ref.center = center;
     ref.status = radius < 1e-6 ? "fixed" : "ok";
     ref.radius = Math.max(radius, 1e-3);
-    ref.escape = Math.max(ref.radius * 20, 10);
+    // Anything this far out has left the attractor; respawning it early
+    // means no long stray streaks while it drifts away.
+    ref.escape = ref.radius * 2;
     ref.speedLo = Math.log(s[Math.floor(REF_SAMPLES * 0.03)] + 1e-9);
     ref.speedHi = Math.log(s[Math.floor(REF_SAMPLES * 0.97)] + 1e-9);
+    ref.speedMax = s[Math.floor(REF_SAMPLES * 0.995)];
     if (ref.speedHi - ref.speedLo < 1e-6) ref.speedHi = ref.speedLo + 1;
+    if (hist.buf) updateHistoryInterval();
     updateStatus();
 }
 
@@ -793,15 +920,20 @@ function setCount(n) {
     n = Math.max(0, Math.min(MAX_PARTICLES, n | 0));
     const old = count;
     count = n;
-    allocHistory();
-    for (let i = 0; i < old && i < n; i++) resetHistory(i);
+    allocHistory(old);
     for (let i = old; i < n; i++) spawn(i);
     dirty = true;
 }
 
-function allocHistory() {
+/* (Re)allocate the history for the current count. Existing trails are
+   carried over, resampled by age if the history length changes, so moving
+   the particle slider never makes trails snap or vanish. */
+function allocHistory(keep = 0) {
     const n = Math.max(1, count);
-    hist.L = Math.max(12, Math.min(64, Math.floor(HISTORY_BUDGET / n)));
+    const old = hist.buf ? { buf: hist.buf, L: hist.L, stride: hist.stride, head: hist.head, interval: hist.interval } : null;
+    // Lengths come in a few steps so most slider moves keep the same one.
+    const L = Math.floor(HISTORY_BUDGET / n);
+    hist.L = L >= 64 ? 64 : L >= 48 ? 48 : L >= 32 ? 32 : L >= 24 ? 24 : 16;
     hist.W = Math.min(n, 2048);
     hist.R = Math.ceil(n / hist.W);
     hist.stride = hist.W * hist.R;
@@ -809,6 +941,13 @@ function allocHistory() {
     hist.head = 0;
     hist.clock = 0;
     updateHistoryInterval();
+    const m = old ? Math.min(keep, count) : 0;
+    for (let a = 0; a < hist.L && m > 0; a++) {
+        const ao = Math.min(old.L - 1, Math.round(a * hist.interval / old.interval));
+        const from = ((old.head - ao + old.L) % old.L) * old.stride * 4;
+        const to = ((hist.L - a) % hist.L) * hist.stride * 4;
+        hist.buf.set(old.buf.subarray(from, from + m * 4), to);
+    }
     hist.fullDirty = true;
     hist.dirtySlots.clear();
     if (gl) glResizeHistory();
@@ -817,7 +956,15 @@ function allocHistory() {
 /* Trails cover the same real time at every speed and particle count. */
 function updateHistoryInterval() {
     const A = ATTRACTORS[state.type];
-    hist.interval = TRAIL_SECONDS * A.timeScale / Math.max(1, hist.L - 1);
+    // Samples stay closely spaced along the curve: at most ~1/8 of the
+    // attractor's radius apart even for its fast particles. With fewer slots
+    // (many particles) or faster flows the trail gets shorter in time
+    // instead of coarser, so curves never turn into long straight chords.
+    const fine = 0.15 * ref.radius / Math.max(1e-9, ref.speedMax);
+    hist.interval = Math.min(TRAIL_SECONDS * A.timeScale / 63, fine);
+    // Never let the sample clock run past the interval (it would integrate
+    // backwards for a moment).
+    hist.clock = Math.min(hist.clock, hist.interval);
 }
 
 /* Collapse particle i's history onto its current position, so a respawned
@@ -825,11 +972,12 @@ function updateHistoryInterval() {
 function resetHistory(i) {
     if (!hist.buf || i >= count) return;
     const step = hist.stride * 4;
+    const w = packedT(i);
     for (let k = 0, o = i * 4; k < hist.L; k++, o += step) {
         hist.buf[o] = px[i];
         hist.buf[o + 1] = py[i];
         hist.buf[o + 2] = pz[i];
-        hist.buf[o + 3] = pSpeed[i];
+        hist.buf[o + 3] = w;
     }
     hist.fullDirty = true;
 }
@@ -840,7 +988,7 @@ function writeSlot(slot) {
         b[o] = px[i];
         b[o + 1] = py[i];
         b[o + 2] = pz[i];
-        b[o + 3] = pSpeed[i];
+        b[o + 3] = packedT(i);
     }
     hist.dirtySlots.add(slot);
 }
@@ -960,8 +1108,14 @@ uniform vec3 uCenter;
 uniform float uFocal, uCamDist, uRadius;
 uniform vec2 uHalf;
 uniform vec2 uOffset;                 // screen offset in pixels
-uniform vec2 uSpeed;                  // log-speed low end, span
-uniform float uFlow, uTime;           // colour-flow mix (0 = by speed) and phase
+uniform float uTailCool;               // how far trail tails drift down the palette
+uniform float uAlive;                 // 0..1 weight of the firefly flashes
+// History .w packs the palette coordinate c (0..1) and a flash level k
+// (0..255) as c + 2k.
+float flashOf(float w) { return floor(w * 0.5) / 255.0; }
+float colorOf(float w) { return min(1.0, w - 2.0 * floor(w * 0.5) + 0.22 * uAlive * flashOf(w)); }  // a flash also warms the hue a step up the palette
+// Brightness of a particle: dim between flashes, bright at the peak.
+float glowOf(float w) { return mix(1.0, 0.4 + 1.25 * flashOf(w), uAlive); }
 uniform vec3 uPalette[${PALETTE_SIZE}];
 
 vec4 fetchSample(int i, int age) {
@@ -975,30 +1129,16 @@ vec2 project(vec3 p, out float depth) {
     depth = clamp((v.z / uRadius + 1.0) * 0.5, 0.0, 1.0);
     return v.xy * w + uOffset;
 }
-float speedT(float speed) {
-    return clamp((log(speed + 1e-9) - uSpeed.x) / uSpeed.y, 0.0, 1.0);
-}
 vec3 colorAt(float t) {
+    t = clamp(t, 0.0, 1.0);
     float f = t * ${PALETTE_SIZE - 1}.0;
     int i0 = int(floor(f));
     int i1 = min(i0 + 1, ${PALETTE_SIZE - 1});
     return mix(uPalette[i0], uPalette[i1], fract(f));
 }
-vec3 colorFor(float speed) { return colorAt(speedT(speed)); }
-// Colour flow: a slowly turning spiral of colour bands fixed in space.
-// Particles pick up the colour of the band they cross, so waves of colour
-// travel through the flow. The triangle wave keeps the palette continuous,
-// and the spiral winds exactly once so atan's seam never shows.
-float flowT(vec3 p) {
-    vec3 q = (p - uCenter) / uRadius;
-    float ph = 0.9 * length(q) + atan(q.y, q.x) / 6.2831853 + 0.25 * q.z - uTime;
-    return 1.0 - abs(2.0 * fract(ph) - 1.0);
-}
-vec3 colorMode(float speed, vec3 p, float tail) {
-    return colorAt(mix(speedT(speed) * tail, flowT(p), uFlow));
-}
 `;
 
+const TRAIL_SUB = 4;                  // curve pieces per history segment
 const TRAIL_VS = `#version 300 es
 precision highp float;
 precision highp int;
@@ -1009,41 +1149,55 @@ out vec3 vColor;
 out float vAlpha;
 out float vSide;
 out float vHalf;
+// Catmull-Rom through samples spaced evenly in time: a C1 curve whose
+// tangents are the particle's (finite-difference) velocity, so fast arcs
+// stay round instead of turning into straight chords.
+vec3 curve(vec3 p0, vec3 p1, vec3 p2, vec3 p3, float t) {
+    float t2 = t * t, t3 = t2 * t;
+    return 0.5 * ((2.0 * p1) + (-p0 + p2) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2 + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3);
+}
 void main() {
     int i = gl_InstanceID % uCount;
     int age = gl_InstanceID / uCount;              // segment from age to age + 1
     vec4 a = fetchSample(i, age);
     vec4 b = fetchSample(i, age + 1);
-    float da, db;
-    vec2 sa = project(a.xyz, da);
-    vec2 sb = project(b.xyz, db);
-    vec2 d = sb - sa;
-    float len = length(d);
-    vec2 dir = len > 1e-4 ? d / len : vec2(1.0, 0.0);
-    vec2 n = vec2(-dir.y, dir.x);
+    vec3 p0 = age > 0 ? fetchSample(i, age - 1).xyz : 2.0 * a.xyz - b.xyz;
+    vec3 p3 = age + 2 < uLen ? fetchSample(i, age + 2).xyz : 2.0 * b.xyz - a.xyz;
 
-    float t = float(gl_VertexID >> 1);             // 0 at the newer end
+    float t = float(gl_VertexID >> 1) / ${TRAIL_SUB}.0;   // 0 at the newer end
     float side = float(gl_VertexID & 1) * 2.0 - 1.0;
+    float depth, d2;
+    vec2 sp = project(curve(p0, a.xyz, b.xyz, p3, t), depth);
+    // Screen tangent from a nearby point on the same curve.
+    float e = t < 0.5 ? 0.02 : -0.02;
+    vec2 sq = project(curve(p0, a.xyz, b.xyz, p3, t + e), d2);
+    vec2 d = (sq - sp) * sign(e);
+    float len = length(d);
+    vec2 dir = len > 1e-5 ? d / len : vec2(1.0, 0.0);
+    vec2 n = vec2(-dir.y, dir.x);
+    // A collapsed history (a particle that just respawned) draws nothing.
+    float seg = distance(a.xyz, b.xyz);
+
     float u = (float(age) + t) / float(uLen - 1);  // 0 at the head, 1 at the tail
-    float depth = mix(da, db, t);
 
     // Comet streak: widest at the head, tapering to a hairline; the extra
     // margin leaves room for a one-pixel anti-aliased edge.
-    float w = uWidth * mix(1.6, 0.35, sqrt(u)) * mix(0.8, 1.15, depth);
+    float w = uWidth * mix(1.7, 0.3, sqrt(u)) * mix(0.8, 1.15, depth);
     float half_ = w * 0.5 + 1.0;
-    vec2 s = mix(sa, sb, t) + n * side * half_;
-    gl_Position = vec4(s / uHalf, 0.0, 1.0);
+    gl_Position = vec4((sp + n * side * half_) / uHalf, 0.0, 1.0);
 
     vSide = side * half_;                          // distance from the centre line, px
     vHalf = w * 0.5;
-    // The tail cools down the palette as it fades, like a glowing ember
-    // leaving a darker smoke trail behind it.
-    vColor = colorMode(t < 0.5 ? a.w : b.w, mix(a.xyz, b.xyz, t), 1.0 - 0.55 * u);
+    // .w holds the palette coordinate the particle had at that moment, so
+    // the trail records its colour history. In speed mode the tail also
+    // cools down the palette, like an ember leaving darker smoke behind.
+    vColor = colorAt(mix(colorOf(a.w), colorOf(b.w), t) * (1.0 - uTailCool * u))
+           * mix(glowOf(a.w), glowOf(b.w), t);
     // Bright head, long soft decay that reaches exactly zero at the tail.
-    float fade = exp(-4.5 * u) * (1.0 - u * u);
+    float fade = exp(-4.2 * u) * (1.0 - u * u);
     // Thin lines cover less than a pixel; keep their energy constant.
     float cover = min(1.0, w);
-    vAlpha = uAlpha * fade * cover * mix(0.4, 1.0, depth) * (len > 1e-4 ? 1.0 : 0.0);
+    vAlpha = uAlpha * fade * cover * mix(0.4, 1.0, depth) * (seg > 1e-7 * uRadius ? 1.0 : 0.0);
 }`;
 
 const TRAIL_FS = `#version 300 es
@@ -1072,7 +1226,7 @@ void main() {
     float depth;
     vec2 s = project(p.xyz, depth);
     gl_Position = vec4(s / uHalf, 0.0, 1.0);
-    vColor = colorMode(p.w, p.xyz, 1.0);
+    vColor = colorAt(colorOf(p.w)) * glowOf(p.w);
     vAlpha = uAlpha * mix(0.4, 1.0, depth);
     vSize = uSize * mix(0.8, 1.15, depth);
     gl_PointSize = vSize + 2.0;                    // room for the AA edge
@@ -1242,9 +1396,8 @@ function setSceneUniforms(u, M) {
     gl.uniform1f(u.uRadius, r);
     gl.uniform2f(u.uHalf, width / 2, height / 2);
     gl.uniform2f(u.uOffset, cam.offX, cam.offY);
-    gl.uniform2f(u.uSpeed, ref.speedLo, ref.speedHi - ref.speedLo);
-    gl.uniform1f(u.uFlow, state.flowMix);
-    gl.uniform1f(u.uTime, state.flowTime);
+    gl.uniform1f(u.uTailCool, 0.5 * (1 - state.dyeMix));
+    gl.uniform1f(u.uAlive, state.dyeMix);
     if (glr.paletteFor !== state.palette) {
         state.palette.forEach((c, i) => glr.palette.set([c[0] / 255, c[1] / 255, c[2] / 255], i * 3));
         glr.paletteFor = state.palette;
@@ -1294,7 +1447,7 @@ function renderGL() {
             gl.uniform1i(t.u.uCount, count);
             gl.uniform1f(t.u.uWidth, dpr * Math.min(1.5, Math.sqrt(cam.zoom)));
             gl.uniform1f(t.u.uAlpha, 0.9 * density * state.trailFade);
-            gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count * (hist.L - 1));
+            gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 2 * (TRAIL_SUB + 1), count * (hist.L - 1));
         }
 
         const p = glr.point;
@@ -1345,18 +1498,7 @@ function render2D() {
         const w = focal / Math.max(camDist - vz, r * 0.05);
         return [ox + vx * w, oy - vy * w];
     };
-    // Same colouring as the WebGL shaders: by speed, blended into colour flow.
-    const fm = state.flowMix, ft = state.flowTime;
-    const colorIndex = (s, x, y, z) => {
-        let t = Math.max(0, Math.min(1, (Math.log(s + 1e-9) - ref.speedLo) / span));
-        if (fm > 0) {
-            const qx = (x - ccx) / r, qy = (y - ccy) / r, qz = (z - ccz) / r;
-            const ph = 0.9 * Math.hypot(qx, qy, qz) + Math.atan2(qy, qx) / (2 * Math.PI) + 0.25 * qz - ft;
-            const f = ph - Math.floor(ph);
-            t += (1 - Math.abs(2 * f - 1) - t) * fm;
-        }
-        return Math.round(t * (PALETTE_SIZE - 1));
-    };
+    const colorIndex = i => Math.round(colorT(i) * (PALETTE_SIZE - 1));
 
     ctx.globalCompositeOperation = "lighter";
 
@@ -1371,7 +1513,7 @@ function render2D() {
         const sx = new Float32Array(L), sy = new Float32Array(L);
         ctx.lineCap = "round";
         for (let i = 0; i < count; i += step) {
-            ctx.strokeStyle = css[colorIndex(pSpeed[i], px[i], py[i], pz[i])];
+            ctx.strokeStyle = css[colorIndex(i)];
             for (let a = 0; a < L; a++) {
                 const o = ((hist.head - a + L) % L) * stride + i * 4;
                 [sx[a], sy[a]] = proj(b[o], b[o + 1], b[o + 2]);
@@ -1380,7 +1522,7 @@ function render2D() {
                 const a0 = k * per, a1 = Math.min(L - 1, a0 + per);
                 if (a0 >= a1) break;
                 const u = (k + 0.5) / pieces;
-                ctx.globalAlpha = 0.5 * density * Math.exp(-4.5 * u) * state.trailFade * state.sceneFade;
+                ctx.globalAlpha = 0.32 * density * Math.exp(-4.5 * u) * state.trailFade * state.sceneFade;
                 ctx.lineWidth = dpr * (1.6 - 1.2 * Math.sqrt(u));
                 ctx.beginPath();
                 ctx.moveTo(sx[a0], sy[a0]);
@@ -1394,7 +1536,7 @@ function render2D() {
     const size = 1.8 * dpr;
     let lastColor = -1;
     for (let i = 0; i < count; i++) {
-        const c = colorIndex(pSpeed[i], px[i], py[i], pz[i]);
+        const c = colorIndex(i);
         if (c !== lastColor) { ctx.fillStyle = css[c]; lastColor = c; }
         const [sx, sy] = proj(px[i], py[i], pz[i]);
         ctx.fillRect(sx - size / 2, sy - size / 2, size, size);
@@ -1435,6 +1577,7 @@ function frame(now) {
     if (updateMorph(dt)) moving = true;
 
     if (!state.paused && state.speed > 0 && count > 0 && dt > 0 && !state.pendingType) {
+        if (state.dyeMix > 0) updateFireflies(dt * Math.sqrt(state.speed));
         advance(dt * state.speed * ATTRACTORS[state.type].timeScale);
         dirty = true;
     }
@@ -1451,14 +1594,10 @@ function frame(now) {
 /* Trails and attractor switches fade instead of popping. */
 function updateFades(dt) {
     let changed = false;
-    const flowTarget = state.flow ? 1 : 0;
-    if (state.flowMix !== flowTarget) {
-        const step = dt / 0.8;
-        state.flowMix = flowTarget > state.flowMix ? Math.min(1, state.flowMix + step) : Math.max(0, state.flowMix - step);
-        changed = true;
-    }
-    if (state.flowMix > 0 && !state.paused) {
-        state.flowTime = (state.flowTime + dt * 0.07 * state.speed) % 1000;
+    const dyeTarget = state.colorBy === "dye" ? 1 : 0;
+    if (state.dyeMix !== dyeTarget) {
+        const step = dt / 0.9;
+        state.dyeMix = dyeTarget > state.dyeMix ? Math.min(1, state.dyeMix + step) : Math.max(0, state.dyeMix - step);
         changed = true;
     }
     const target = state.trails ? 1 : 0;
@@ -1742,7 +1881,7 @@ function onKeyDown(e) {
     } else if (e.key === "t" || e.key === "T") {
         toggleTrails();
     } else if (e.key === "c" || e.key === "C") {
-        toggleFlow();
+        toggleColorBy();
     } else if (e.key === "s" || e.key === "S") {
         toggleSpin();
     } else if (e.key === "l" || e.key === "L") {
@@ -1783,10 +1922,15 @@ function togglePause() {
     b.setAttribute("aria-label", label);
 }
 
-function toggleFlow() {
-    state.flow = !state.flow;
-    setPressed("flowSwitch", state.flow);
+function setColorBy(mode) {
+    state.colorBy = mode;
+    document.querySelectorAll("#colorBy [data-mode]").forEach(b => b.setAttribute("aria-checked", String(b.dataset.mode === mode)));
     dirty = true;
+}
+
+function toggleColorBy() {
+    setColorBy(state.colorBy === "dye" ? "speed" : "dye");
+    showToast(state.colorBy === "dye" ? "Colour: alive, pulsing in waves" : "Colour: particle speed");
 }
 
 function toggleTrails() {
@@ -1833,6 +1977,9 @@ function applyAttractor(type) {
     cam.reset = null;
     cam.zoom = cam.zoomTarget = 1;
     applyRecommended(type);
+    // Each attractor opens in the palette that suits it, until the viewer
+    // picks one themselves.
+    if (!state.userPalette && ATTRACTORS[type].palette) setScheme(ATTRACTORS[type].palette);
     if (count !== state.count) setCount(state.count);
     else updateHistoryInterval();
     spawnAll();
@@ -2074,7 +2221,7 @@ function buildAttractorCards() {
         card.addEventListener("click", () => setAttractor(type));
         grid.appendChild(card);
         // The default orbit, sampled once, is redrawn when the palette changes.
-        thumbs[type] = { canvas: card.querySelector("canvas"), orbit: sampleOrbit(A, A.params) };
+        thumbs[type] = { canvas: card.querySelector("canvas"), orbit: sampleOrbit(A, A.params, THUMB_SAMPLES) };
     }
     // Arrow keys move between cards, as in any radio group.
     grid.addEventListener("keydown", e => {
@@ -2115,7 +2262,7 @@ function drawThumbs() {
         if (!orbit) continue;
 
         const M = mul3(quatToMat(viewQuat(A.view)), alignUp(A.up));
-        const n = REF_SAMPLES, xs = new Float32Array(n), ys = new Float32Array(n);
+        const n = orbit.speeds.length, xs = new Float32Array(n), ys = new Float32Array(n);
         for (let j = 0; j < n; j++) {
             const x = orbit.pts[3 * j], y = orbit.pts[3 * j + 1], z = orbit.pts[3 * j + 2];
             xs[j] = M[0] * x + M[1] * y + M[2] * z;
@@ -2129,19 +2276,38 @@ function drawThumbs() {
         const k = Math.min(c.width * (1 - 2 * pad) / (maxX - minX), c.height * (1 - 2 * pad) / (maxY - minY));
         const ox = c.width / 2 - k * (minX + maxX) / 2, oy = c.height / 2 - k * (minY + maxY) / 2;
         const speeds = orbit.speeds, sorted = speeds.slice().sort();
+        const pal = buildPalette(A.palette || state.scheme);
         const sLo = Math.log(sorted[Math.floor(n * 0.03)] + 1e-9), sHi = Math.log(sorted[Math.floor(n * 0.97)] + 1e-9);
 
-        g.lineWidth = 0.7 * r;
-        g.lineJoin = "round";
-        for (let j = 1; j < n; j++) {
+        // Thin additive strokes: dense regions glow, sparse ones stay fine.
+        // Points closer than ~0.6 px are merged and consecutive points of
+        // the same colour share one path, so joins are smooth and round.
+        g.globalCompositeOperation = "lighter";
+        g.lineWidth = 0.55 * r;
+        g.lineJoin = g.lineCap = "round";
+        const bucket = j => {
             const t = Math.max(0, Math.min(1, (Math.log(speeds[j] + 1e-9) - sLo) / (sHi - sLo || 1)));
-            const col = state.palette[Math.round(t * (PALETTE_SIZE - 1))];
-            g.strokeStyle = `rgba(${col[0]}, ${col[1]}, ${col[2]}, 0.7)`;
+            return Math.round(t * (PALETTE_SIZE - 1));
+        };
+        const minStep = 0.6 * r;
+        let cur = bucket(0), px = ox + xs[0] * k, py = oy + ys[0] * k;
+        const begin = () => {
+            const col = pal[cur];
+            g.strokeStyle = `rgba(${col[0]}, ${col[1]}, ${col[2]}, 0.2)`;
             g.beginPath();
-            g.moveTo(ox + xs[j - 1] * k, oy + ys[j - 1] * k);
-            g.lineTo(ox + xs[j] * k, oy + ys[j] * k);
-            g.stroke();
+            g.moveTo(px, py);
+        };
+        begin();
+        for (let j = 1; j < n; j++) {
+            const qx = ox + xs[j] * k, qy = oy + ys[j] * k;
+            if (Math.abs(qx - px) + Math.abs(qy - py) < minStep && j < n - 1) continue;
+            g.lineTo(qx, qy);
+            px = qx; py = qy;
+            const b = bucket(j);
+            if (b !== cur) { g.stroke(); cur = b; begin(); }
         }
+        g.stroke();
+        g.globalCompositeOperation = "source-over";
     }
 }
 
@@ -2161,7 +2327,7 @@ function buildPaletteSwatches() {
         b.title = b.getAttribute("aria-label");
         b.style.background = `linear-gradient(90deg, ${stops})`;
         b.dataset.scheme = name;
-        b.addEventListener("click", () => setScheme(name));
+        b.addEventListener("click", () => { state.userPalette = true; setScheme(name); });
         row.appendChild(b);
     }
 }
@@ -2171,7 +2337,6 @@ function setScheme(name) {
     state.palette = buildPalette(name);
     document.querySelectorAll(".swatch").forEach(b => b.setAttribute("aria-checked", String(b.dataset.scheme === name)));
     applyAccent();
-    drawThumbs();
     dirty = true;
 }
 
@@ -2243,7 +2408,7 @@ function initUI() {
     $("luckyBtn").addEventListener("click", lucky);
     $("resetParamsBtn").addEventListener("click", resetParams);
     $("trailsSwitch").addEventListener("click", toggleTrails);
-    $("flowSwitch").addEventListener("click", toggleFlow);
+    document.querySelectorAll("#colorBy [data-mode]").forEach(b => b.addEventListener("click", () => setColorBy(b.dataset.mode)));
     setSpin(state.spinRpm);
     $("spinSpeed").addEventListener("input", e => setSpin(parseFloat(e.target.value)));
     $("spinSpeed").addEventListener("dblclick", () => setSpin(1.2));

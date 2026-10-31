@@ -81,6 +81,10 @@
                 <div class="control">
                     <div class="control-row">
                         <span id="paletteLabel">Colour</span>
+                        <div class="seg" id="colorBy" role="radiogroup" aria-label="Colour by">
+                            <button type="button" role="radio" data-mode="dye" aria-checked="true" title="Particles carry colour through the flow and pulse like fireflies, drifting in and out of sync (C)">Alive</button>
+                            <button type="button" role="radio" data-mode="speed" aria-checked="false" title="Colour shows how fast each particle moves (C)">Speed</button>
+                        </div>
                     </div>
                     <div class="palette-row" id="paletteRow" role="radiogroup" aria-labelledby="paletteLabel"></div>
                 </div>
@@ -95,10 +99,6 @@
                     <button class="switch" id="trailsSwitch" type="button" role="switch" aria-checked="true">
                         <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
                         Light trails
-                    </button>
-                    <button class="switch" id="flowSwitch" type="button" role="switch" aria-checked="false" title="Waves of colour travel through the flow (C)">
-                        <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
-                        Colour flow
                     </button>
                 </div>
             </section>
@@ -151,14 +151,14 @@
             <dt><kbd>Space</kbd></dt><dd>Pause or resume</dd>
             <dt><kbd>L</kbd></dt><dd>Surprise me: morph into a preset</dd>
             <dt><kbd>T</kbd></dt><dd>Light trails on or off</dd>
-            <dt><kbd>C</kbd></dt><dd>Colour flow on or off</dd>
+            <dt><kbd>C</kbd></dt><dd>Alive colouring or colour by speed</dd>
             <dt><kbd>S</kbd></dt><dd>Auto-rotate on or off</dd>
             <dt><kbd>R</kbd></dt><dd>Reset the view</dd>
             <dt><kbd>Enter</kbd></dt><dd>Restart particles</dd>
             <dt><kbd>H</kbd></dt><dd>Hide or show the controls</dd>
             <dt><kbd>F</kbd></dt><dd>Full screen</dd>
         </dl>
-        <p class="dialog-note">Colour shows how fast each particle moves, or, with colour flow on, waves of colour drifting through the attractor. Double-click a slider to restore its default.</p>
+        <p class="dialog-note">Alive colouring lets each particle carry its colour through the flow while it pulses like a firefly; neighbours nudge each other, so waves of synchrony bloom and dissolve. Speed colouring shows how fast each particle moves. Double-click a slider to restore its default.</p>
     </dialog>
 
     <script src="script.js"></script>
