@@ -459,15 +459,16 @@ const PARAM_LABELS = { sigma: "σ", rho: "ρ", beta: "β" };
 const PALETTE_SIZE = 32;
 
 const SCHEMES = {
-    // Vivid gradients, interpolated in OKLab so every step changes evenly in
-    // lightness and hue (no muddy or greyish middles). Slow particles take
-    // the first colour, fast ones the last; brightness rises with speed but
-    // never reaches white, so colour stays rich where trails overlap.
-    nebula: { label: "Nebula", accent: "#ff5fa2", stops: ["#4b1fff", "#9d2bff", "#ff2d95", "#ff7a3d", "#ffc93c"] },
-    aurora: { label: "Aurora", accent: "#2ef2b0", stops: ["#2340ff", "#0098ff", "#00d9e0", "#2ef2a0", "#b8ff4a"] },
-    sunset: { label: "Sunset", accent: "#ff8a3d", stops: ["#b0127a", "#ff2e63", "#ff6a2a", "#ffae1f", "#ffe14d"] },
-    ocean: { label: "Ocean", accent: "#38d6ff", stops: ["#3a1cff", "#2563ff", "#0aa7ff", "#21e3ff", "#8dfff0"] },
-    spectrum: { label: "Spectrum", accent: "#8ab4ff", oklch: { l: [0.64, 0.8], c: 0.22, h: [25, 320] } }
+    // Slow particles take the first colour, fast ones the last; trail tails
+    // drift back towards the start. Stops are blended in OKLab. The
+    // scientific maps follow matplotlib's perceptually uniform colormaps,
+    // minus their near-black ends, which would vanish against the sky.
+    inferno: { label: "Inferno", accent: "#fca50a", stops: ["#57106e", "#8a226a", "#bc3754", "#e45a31", "#f98e09", "#fbc228", "#f6e95c"] },
+    plasma: { label: "Plasma", accent: "#f0609a", stops: ["#5402a3", "#8b0aa5", "#b83289", "#db5c68", "#f48849", "#febd2a", "#f0f921"] },
+    viridis: { label: "Viridis", accent: "#35b779", stops: ["#46327e", "#365c8d", "#277f8e", "#1fa187", "#4ac16d", "#a0da39", "#fde725"] },
+    rainbow: { label: "Rainbow", accent: "#8ab4ff", oklch: { l: [0.64, 0.8], c: 0.22, h: [25, 320] } },
+    fluoro: { label: "Fluorescent", accent: "#39ff88", stops: ["#ff00b8", "#b300ff", "#4a4dff", "#00e5ff", "#00ff9c", "#b6ff00"] },
+    aurora: { label: "Aurora", accent: "#2ef2b0", stops: ["#2340ff", "#0098ff", "#00d9e0", "#2ef2a0", "#b8ff4a"] }
 };
 
 function hexToRgb(hex) {
@@ -499,7 +500,7 @@ function oklabToRgb([L, A, B]) {
 
 /* Returns PALETTE_SIZE colours as [r, g, b] in 0..255. */
 function buildPalette(scheme) {
-    const S = SCHEMES[scheme] || SCHEMES.nebula;
+    const S = SCHEMES[scheme] || SCHEMES.inferno;
     const out = [];
     if (S.oklch) {
         const { l, c, h } = S.oklch;
@@ -536,7 +537,7 @@ function buildPalette(scheme) {
 
 const MAX_PARTICLES = 20000;
 const HISTORY_BUDGET = 160000;        // particles × history length
-const TRAIL_SECONDS = 0.9;            // real-time length of a trail at 1x
+const TRAIL_SECONDS = 1.5;            // real-time length of a trail at 1x
 
 const state = {
     type: "lorenz",
@@ -546,10 +547,13 @@ const state = {
     paused: false,
     trails: true,
     trailFade: 1,                     // eases toward trails ? 1 : 0
+    flow: false,                      // colour flow instead of colour by speed
+    flowMix: 0,                       // eases toward flow ? 1 : 0
+    flowTime: 0,
     spinRpm: 1.2,                     // auto-rotation speed, turns per minute
     lastSpinRpm: 1.2,
-    scheme: "nebula",
-    palette: buildPalette("nebula"),
+    scheme: "inferno",
+    palette: buildPalette("inferno"),
     sceneFade: 1,                     // dips to 0 while switching attractors
     pendingType: null,
     morph: null,                      // { from, to, t } while Lucky morphs
@@ -956,6 +960,7 @@ uniform float uFocal, uCamDist, uRadius;
 uniform vec2 uHalf;
 uniform vec2 uOffset;                 // screen offset in pixels
 uniform vec2 uSpeed;                  // log-speed low end, span
+uniform float uFlow, uTime;           // colour-flow mix (0 = by speed) and phase
 uniform vec3 uPalette[${PALETTE_SIZE}];
 
 vec4 fetchSample(int i, int age) {
@@ -969,12 +974,27 @@ vec2 project(vec3 p, out float depth) {
     depth = clamp((v.z / uRadius + 1.0) * 0.5, 0.0, 1.0);
     return v.xy * w + uOffset;
 }
-vec3 colorFor(float speed) {
-    float t = clamp((log(speed + 1e-9) - uSpeed.x) / uSpeed.y, 0.0, 1.0);
+float speedT(float speed) {
+    return clamp((log(speed + 1e-9) - uSpeed.x) / uSpeed.y, 0.0, 1.0);
+}
+vec3 colorAt(float t) {
     float f = t * ${PALETTE_SIZE - 1}.0;
     int i0 = int(floor(f));
     int i1 = min(i0 + 1, ${PALETTE_SIZE - 1});
     return mix(uPalette[i0], uPalette[i1], fract(f));
+}
+vec3 colorFor(float speed) { return colorAt(speedT(speed)); }
+// Colour flow: a slowly turning spiral of colour bands fixed in space.
+// Particles pick up the colour of the band they cross, so waves of colour
+// travel through the flow. The triangle wave keeps the palette continuous,
+// and the spiral winds exactly once so atan's seam never shows.
+float flowT(vec3 p) {
+    vec3 q = (p - uCenter) / uRadius;
+    float ph = 0.9 * length(q) + atan(q.y, q.x) / 6.2831853 + 0.25 * q.z - uTime;
+    return 1.0 - abs(2.0 * fract(ph) - 1.0);
+}
+vec3 colorMode(float speed, vec3 p, float tail) {
+    return colorAt(mix(speedT(speed) * tail, flowT(p), uFlow));
 }
 `;
 
@@ -1006,18 +1026,20 @@ void main() {
     float u = (float(age) + t) / float(uLen - 1);  // 0 at the head, 1 at the tail
     float depth = mix(da, db, t);
 
-    // A fine line that thins slightly towards the tail; the extra margin
-    // leaves room for a one-pixel anti-aliased edge.
-    float w = uWidth * (1.0 - 0.45 * u) * mix(0.8, 1.15, depth);
+    // Comet streak: widest at the head, tapering to a hairline; the extra
+    // margin leaves room for a one-pixel anti-aliased edge.
+    float w = uWidth * mix(1.6, 0.35, sqrt(u)) * mix(0.8, 1.15, depth);
     float half_ = w * 0.5 + 1.0;
     vec2 s = mix(sa, sb, t) + n * side * half_;
     gl_Position = vec4(s / uHalf, 0.0, 1.0);
 
     vSide = side * half_;                          // distance from the centre line, px
     vHalf = w * 0.5;
-    vColor = colorFor(t < 0.5 ? a.w : b.w);
-    // Smooth comet tail: full at the head, easing to nothing.
-    float fade = (1.0 - u) * (1.0 - u) * (3.0 - 2.0 * (1.0 - u));
+    // The tail cools down the palette as it fades, like a glowing ember
+    // leaving a darker smoke trail behind it.
+    vColor = colorMode(t < 0.5 ? a.w : b.w, mix(a.xyz, b.xyz, t), 1.0 - 0.55 * u);
+    // Bright head, long soft decay that reaches exactly zero at the tail.
+    float fade = exp(-4.5 * u) * (1.0 - u * u);
     // Thin lines cover less than a pixel; keep their energy constant.
     float cover = min(1.0, w);
     vAlpha = uAlpha * fade * cover * mix(0.4, 1.0, depth) * (len > 1e-4 ? 1.0 : 0.0);
@@ -1049,7 +1071,7 @@ void main() {
     float depth;
     vec2 s = project(p.xyz, depth);
     gl_Position = vec4(s / uHalf, 0.0, 1.0);
-    vColor = colorFor(p.w);
+    vColor = colorMode(p.w, p.xyz, 1.0);
     vAlpha = uAlpha * mix(0.4, 1.0, depth);
     vSize = uSize * mix(0.8, 1.15, depth);
     gl_PointSize = vSize + 2.0;                    // room for the AA edge
@@ -1219,6 +1241,8 @@ function setSceneUniforms(u, M) {
     gl.uniform2f(u.uHalf, width / 2, height / 2);
     gl.uniform2f(u.uOffset, cam.offX, cam.offY);
     gl.uniform2f(u.uSpeed, ref.speedLo, ref.speedHi - ref.speedLo);
+    gl.uniform1f(u.uFlow, state.flowMix);
+    gl.uniform1f(u.uTime, state.flowTime);
     if (glr.paletteFor !== state.palette) {
         state.palette.forEach((c, i) => glr.palette.set([c[0] / 255, c[1] / 255, c[2] / 255], i * 3));
         glr.paletteFor = state.palette;
@@ -1267,7 +1291,7 @@ function renderGL() {
             setSceneUniforms(t.u, M);
             gl.uniform1i(t.u.uCount, count);
             gl.uniform1f(t.u.uWidth, dpr * Math.min(1.5, Math.sqrt(cam.zoom)));
-            gl.uniform1f(t.u.uAlpha, 0.55 * density * state.trailFade);
+            gl.uniform1f(t.u.uAlpha, 0.9 * density * state.trailFade);
             gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count * (hist.L - 1));
         }
 
@@ -1403,6 +1427,16 @@ function frame(now) {
 /* Trails and attractor switches fade instead of popping. */
 function updateFades(dt) {
     let changed = false;
+    const flowTarget = state.flow ? 1 : 0;
+    if (state.flowMix !== flowTarget) {
+        const step = dt / 0.8;
+        state.flowMix = flowTarget > state.flowMix ? Math.min(1, state.flowMix + step) : Math.max(0, state.flowMix - step);
+        changed = true;
+    }
+    if (state.flowMix > 0 && !state.paused) {
+        state.flowTime = (state.flowTime + dt * 0.07 * state.speed) % 1000;
+        changed = true;
+    }
     const target = state.trails ? 1 : 0;
     if (state.trailFade !== target) {
         const step = dt / 0.45;
@@ -1683,6 +1717,8 @@ function onKeyDown(e) {
         resetView();
     } else if (e.key === "t" || e.key === "T") {
         toggleTrails();
+    } else if (e.key === "c" || e.key === "C") {
+        toggleFlow();
     } else if (e.key === "s" || e.key === "S") {
         toggleSpin();
     } else if (e.key === "l" || e.key === "L") {
@@ -1721,6 +1757,12 @@ function togglePause() {
     const label = state.paused ? "Play" : "Pause";
     b.title = `${label} (Space)`;
     b.setAttribute("aria-label", label);
+}
+
+function toggleFlow() {
+    state.flow = !state.flow;
+    setPressed("flowSwitch", state.flow);
+    dirty = true;
 }
 
 function toggleTrails() {
@@ -1791,9 +1833,11 @@ function applyRecommended(type) {
 /* Phones and tablets get fewer particles: the same look at a frame rate
    their GPUs can hold. */
 function recommendedCount(type) {
-    const n = ATTRACTORS[type].count;
+    // Fewer particles leave dark space between the streaks, so each comet
+    // reads on its own instead of merging into a solid surface.
     const touch = window.matchMedia("(pointer: coarse)").matches;
-    return touch ? Math.max(1500, Math.round(n * 0.6 / 500) * 500) : n;
+    const n = ATTRACTORS[type].count * (touch ? 0.4 : 0.6);
+    return Math.max(1000, Math.round(n / 500) * 500);
 }
 
 function restartParticles() {
@@ -2109,7 +2153,7 @@ function setScheme(name) {
 
 /* The interface accent follows the palette. */
 function applyAccent() {
-    const hex = (SCHEMES[state.scheme] || SCHEMES.nebula).accent;
+    const hex = (SCHEMES[state.scheme] || SCHEMES.inferno).accent;
     const [r, g, b] = hexToRgb(hex);
     const root = document.documentElement.style;
     root.setProperty("--accent", hex);
@@ -2175,6 +2219,7 @@ function initUI() {
     $("luckyBtn").addEventListener("click", lucky);
     $("resetParamsBtn").addEventListener("click", resetParams);
     $("trailsSwitch").addEventListener("click", toggleTrails);
+    $("flowSwitch").addEventListener("click", toggleFlow);
     setSpin(state.spinRpm);
     $("spinSpeed").addEventListener("input", e => setSpin(parseFloat(e.target.value)));
     $("spinSpeed").addEventListener("dblclick", () => setSpin(1.2));
