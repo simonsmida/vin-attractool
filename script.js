@@ -459,13 +459,15 @@ const PARAM_LABELS = { sigma: "σ", rho: "ρ", beta: "β" };
 const PALETTE_SIZE = 32;
 
 const SCHEMES = {
-    // Slow particles take the first colour, fast ones the last; the fastest
-    // read as highlights, so every palette ends light.
-    nocturne: { label: "Nocturne", accent: "#b9a2ff", stops: ["#2a2f7a", "#5446b8", "#9673e0", "#d79ad6", "#ffcfe4"] },
-    champagne: { label: "Champagne", accent: "#e6c48a", stops: ["#6b3f1d", "#a8692f", "#d6a35a", "#f0d39b", "#f8e6c2"] },
-    glacier: { label: "Glacier", accent: "#9fdcec", stops: ["#123b5c", "#1f6f96", "#4fb0cc", "#a6e1ec", "#d4f4fa"] },
-    aurora: { label: "Aurora", accent: "#7fe0bf", stops: ["#173f6b", "#1d7f86", "#3fbf9c", "#9fe6b8", "#d2f7dc"] },
-    prism: { label: "Prism", accent: "#9ec4ff", stops: ["#d9576b", "#e9925d", "#e9cc78", "#86cfa4", "#6faee3", "#9a86e6", "#d6c9ff"] }
+    // Vivid gradients, interpolated in OKLab so every step changes evenly in
+    // lightness and hue (no muddy or greyish middles). Slow particles take
+    // the first colour, fast ones the last; brightness rises with speed but
+    // never reaches white, so colour stays rich where trails overlap.
+    nebula: { label: "Nebula", accent: "#ff5fa2", stops: ["#4b1fff", "#9d2bff", "#ff2d95", "#ff7a3d", "#ffc93c"] },
+    aurora: { label: "Aurora", accent: "#2ef2b0", stops: ["#2340ff", "#0098ff", "#00d9e0", "#2ef2a0", "#b8ff4a"] },
+    sunset: { label: "Sunset", accent: "#ff8a3d", stops: ["#b0127a", "#ff2e63", "#ff6a2a", "#ffae1f", "#ffe14d"] },
+    ocean: { label: "Ocean", accent: "#38d6ff", stops: ["#3a1cff", "#2563ff", "#0aa7ff", "#21e3ff", "#8dfff0"] },
+    spectrum: { label: "Spectrum", accent: "#8ab4ff", oklch: { l: [0.64, 0.8], c: 0.22, h: [25, 320] } }
 };
 
 function hexToRgb(hex) {
@@ -473,18 +475,57 @@ function hexToRgb(hex) {
     return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
+// sRGB <-> OKLab (Björn Ottosson's matrices).
+const toLin = c => (c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+const toSrgb = c => 255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055);
+function rgbToOklab([r8, g8, b8]) {
+    const r = toLin(r8), g = toLin(g8), b = toLin(b8);
+    const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+    const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    return [0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+            1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+            0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s];
+}
+function oklabToRgb([L, A, B]) {
+    const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+    const m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+    const s = (L - 0.0894841775 * A - 1.2914855480 * B) ** 3;
+    const rgb = [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+                 -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+                 -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s];
+    return rgb.map(c => Math.round(Math.max(0, Math.min(255, toSrgb(Math.max(0, c))))));
+}
+
 /* Returns PALETTE_SIZE colours as [r, g, b] in 0..255. */
 function buildPalette(scheme) {
+    const S = SCHEMES[scheme] || SCHEMES.nebula;
     const out = [];
-    const { stops } = SCHEMES[scheme] || SCHEMES.nocturne;
+    if (S.oklch) {
+        const { l, c, h } = S.oklch;
+        for (let i = 0; i < PALETTE_SIZE; i++) {
+            const t = i / (PALETTE_SIZE - 1);
+            const L = l[0] + (l[1] - l[0]) * t;
+            const H = (h[0] + (h[1] - h[0]) * t) * Math.PI / 180;
+            // Reduce chroma until the colour fits in sRGB, keeping its hue.
+            let C = c, rgb;
+            for (let k = 0; k < 12; k++) {
+                const lab = [L, C * Math.cos(H), C * Math.sin(H)];
+                rgb = oklabToRgb(lab);
+                const back = rgbToOklab(rgb);
+                if (Math.hypot(back[1] - lab[1], back[2] - lab[2]) < 0.01) break;
+                C *= 0.9;
+            }
+            out.push(rgb);
+        }
+        return out;
+    }
+    const labs = S.stops.map(hex => rgbToOklab(hexToRgb(hex)));
     for (let i = 0; i < PALETTE_SIZE; i++) {
-        const t = i / (PALETTE_SIZE - 1);
-        const seg = t * (stops.length - 1);
-        const k = Math.min(stops.length - 2, Math.floor(seg));
+        const seg = i / (PALETTE_SIZE - 1) * (labs.length - 1);
+        const k = Math.min(labs.length - 2, Math.floor(seg));
         const f = seg - k;
-        const a = hexToRgb(stops[k]);
-        const b = hexToRgb(stops[k + 1]);
-        out.push(a.map((v, j) => Math.round(v + (b[j] - v) * f)));
+        out.push(oklabToRgb(labs[k].map((v, j) => v + (labs[k + 1][j] - v) * f)));
     }
     return out;
 }
@@ -507,8 +548,8 @@ const state = {
     trailFade: 1,                     // eases toward trails ? 1 : 0
     spinRpm: 1.2,                     // auto-rotation speed, turns per minute
     lastSpinRpm: 1.2,
-    scheme: "nocturne",
-    palette: buildPalette("nocturne"),
+    scheme: "nebula",
+    palette: buildPalette("nebula"),
     sceneFade: 1,                     // dips to 0 while switching attractors
     pendingType: null,
     morph: null,                      // { from, to, t } while Lucky morphs
@@ -2068,7 +2109,7 @@ function setScheme(name) {
 
 /* The interface accent follows the palette. */
 function applyAccent() {
-    const hex = (SCHEMES[state.scheme] || SCHEMES.nocturne).accent;
+    const hex = (SCHEMES[state.scheme] || SCHEMES.nebula).accent;
     const [r, g, b] = hexToRgb(hex);
     const root = document.documentElement.style;
     root.setProperty("--accent", hex);
