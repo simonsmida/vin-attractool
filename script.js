@@ -949,6 +949,7 @@ function frameScale() {
 // --------------------------------------------------------------------------
 
 let gl = null;
+let glFailure = "";                   // why WebGL 2 was not used, for ?fps
 let glr = null;
 
 const GL_PROJECT = `
@@ -1146,7 +1147,7 @@ function initGL() {
         premultipliedAlpha: false, preserveDrawingBuffer: false,
         powerPreference: "high-performance"
     });
-    if (!context) return false;
+    if (!context) { glFailure = "no WebGL 2 context"; return false; }
     gl = context;
     try {
         const hdr = !!gl.getExtension("EXT_color_buffer_float");
@@ -1168,6 +1169,7 @@ function initGL() {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     } catch (err) {
         console.warn("WebGL 2 renderer unavailable, using Canvas 2D.", err);
+        glFailure = String(err && err.message || err).slice(0, 120);
         gl = null;
         glr = null;
         return false;
@@ -1343,34 +1345,56 @@ function render2D() {
         const w = focal / Math.max(camDist - vz, r * 0.05);
         return [ox + vx * w, oy - vy * w];
     };
-    const colorIndex = s => Math.max(0, Math.min(PALETTE_SIZE - 1, ((Math.log(s + 1e-9) - ref.speedLo) / span * (PALETTE_SIZE - 1)) | 0));
+    // Same colouring as the WebGL shaders: by speed, blended into colour flow.
+    const fm = state.flowMix, ft = state.flowTime;
+    const colorIndex = (s, x, y, z) => {
+        let t = Math.max(0, Math.min(1, (Math.log(s + 1e-9) - ref.speedLo) / span));
+        if (fm > 0) {
+            const qx = (x - ccx) / r, qy = (y - ccy) / r, qz = (z - ccz) / r;
+            const ph = 0.9 * Math.hypot(qx, qy, qz) + Math.atan2(qy, qx) / (2 * Math.PI) + 0.25 * qz - ft;
+            const f = ph - Math.floor(ph);
+            t += (1 - Math.abs(2 * f - 1) - t) * fm;
+        }
+        return Math.round(t * (PALETTE_SIZE - 1));
+    };
 
     ctx.globalCompositeOperation = "lighter";
 
-    // Trails: a subset of particles keeps the CPU cost bounded.
+    // Comet trails, like the WebGL ones: each trail is drawn in a few pieces
+    // that thin and fade towards the tail. A subset of particles keeps the
+    // CPU cost bounded; light energy is scaled so dense clouds never clip.
+    const density = Math.min(1, Math.sqrt(1500 / count));
     if (state.trailFade > 0 && hist.L > 1) {
         const step = Math.max(1, Math.ceil(count / 1500));
         const b = hist.buf, stride = hist.stride * 4, L = hist.L;
-        ctx.lineWidth = dpr;
-        ctx.globalAlpha = 0.35 * state.trailFade * state.sceneFade;
+        const pieces = 4, per = Math.ceil((L - 1) / pieces);
+        const sx = new Float32Array(L), sy = new Float32Array(L);
+        ctx.lineCap = "round";
         for (let i = 0; i < count; i += step) {
-            ctx.strokeStyle = css[colorIndex(pSpeed[i])];
-            ctx.beginPath();
-            for (let a = 0; a < L - 1; a++) {
-                const slot = (hist.head - a + L) % L;
-                const o = slot * stride + i * 4;
-                const [sx, sy] = proj(b[o], b[o + 1], b[o + 2]);
-                if (a === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+            ctx.strokeStyle = css[colorIndex(pSpeed[i], px[i], py[i], pz[i])];
+            for (let a = 0; a < L; a++) {
+                const o = ((hist.head - a + L) % L) * stride + i * 4;
+                [sx[a], sy[a]] = proj(b[o], b[o + 1], b[o + 2]);
             }
-            ctx.stroke();
+            for (let k = 0; k < pieces; k++) {
+                const a0 = k * per, a1 = Math.min(L - 1, a0 + per);
+                if (a0 >= a1) break;
+                const u = (k + 0.5) / pieces;
+                ctx.globalAlpha = 0.5 * density * Math.exp(-4.5 * u) * state.trailFade * state.sceneFade;
+                ctx.lineWidth = dpr * (1.6 - 1.2 * Math.sqrt(u));
+                ctx.beginPath();
+                ctx.moveTo(sx[a0], sy[a0]);
+                for (let a = a0 + 1; a <= a1; a++) ctx.lineTo(sx[a], sy[a]);
+                ctx.stroke();
+            }
         }
     }
 
-    ctx.globalAlpha = state.sceneFade;
+    ctx.globalAlpha = Math.min(1, 0.55 * density + 0.15) * state.sceneFade;
     const size = 1.8 * dpr;
     let lastColor = -1;
     for (let i = 0; i < count; i++) {
-        const c = colorIndex(pSpeed[i]);
+        const c = colorIndex(pSpeed[i], px[i], py[i], pz[i]);
         if (c !== lastColor) { ctx.fillStyle = css[c]; lastColor = c; }
         const [sx, sy] = proj(px[i], py[i], pz[i]);
         ctx.fillRect(sx - size / 2, sy - size / 2, size, size);
@@ -2284,7 +2308,7 @@ function fpsTick(now) {
     if (!showFps) return;
     fpsFrames++;
     if (now - fpsLast > 500) {
-        $("fps").textContent = `${Math.round(fpsFrames * 1000 / (now - fpsLast))} fps · ${count} particles · ${gl ? (glr.hdr ? "WebGL2 HDR" : "WebGL2") : "Canvas 2D"} · ${width}×${height}px`;
+        $("fps").textContent = `${Math.round(fpsFrames * 1000 / (now - fpsLast))} fps · ${count} particles · ${gl ? (glr.hdr ? "WebGL2 HDR" : "WebGL2") : "Canvas 2D"} · ${width}×${height}px${glFailure ? " · " + glFailure : ""}`;
         fpsFrames = 0;
         fpsLast = now;
     }
@@ -2292,7 +2316,8 @@ function fpsTick(now) {
 
 window.addEventListener("DOMContentLoaded", () => {
     canvas = $("canvas");
-    if (!initGL()) ctx = canvas.getContext("2d", { alpha: false });
+    // ?2d forces the Canvas 2D fallback (for testing).
+    if (new URLSearchParams(location.search).has("2d") || !initGL()) ctx = canvas.getContext("2d", { alpha: false });
     if (showFps) $("fps").hidden = false;
 
     initUI();
