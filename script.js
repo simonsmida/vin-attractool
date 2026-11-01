@@ -552,12 +552,13 @@ const MAX_PARTICLES = 20000;
 // trading trail length for count.
 const HISTORY_BUDGET = window.matchMedia("(pointer: coarse)").matches ? 240000 : 480000;
 const COUNT_MIN = 200;
-const DEFAULT_SPEED = 0.5;         // slow enough to follow individual particles
-/* The speed slider is logarithmic from 0.05× to 2×: most of its travel is
-   for slowing down, where differences are easy to see. */
-const SPEED_MIN = 0.05, SPEED_MAX = 2;
-const speedFromSlider = v => SPEED_MIN * (SPEED_MAX / SPEED_MIN) ** (v / 100);
-const sliderFromSpeed = s => 100 * Math.log(s / SPEED_MIN) / Math.log(SPEED_MAX / SPEED_MIN);
+const DEFAULT_SPEED = 0.25;        // slow enough to follow individual particles
+/* The speed slider runs from a standstill to 2× on a power curve: most of
+   its travel is for slow speeds, where differences are easy to see
+   (half way is about 0.35×). */
+const SPEED_MAX = 2, SPEED_CURVE = 2.5;
+const speedFromSlider = v => SPEED_MAX * (v / 100) ** SPEED_CURVE;
+const sliderFromSpeed = s => 100 * (s / SPEED_MAX) ** (1 / SPEED_CURVE);
 const formatSpeed = s => String(+s.toFixed(2)) + "×";
 
 /* The particle slider is logarithmic: equal moves multiply the count by the
@@ -582,7 +583,7 @@ const state = {
     type: "lorenz",
     params: {},                       // live parameter values per attractor
     count: 800,
-    speed: 0.5,
+    speed: 0.25,
     paused: false,
     trails: true,
     trailFade: 1,                     // eases toward trails ? 1 : 0
@@ -3116,6 +3117,7 @@ function initUI() {
         const v = speedFromSlider(parseFloat(e.target.value));
         // Snap to round values near them, so 1× and 0.5× are easy to hit.
         state.speed = v < 0.1 ? Math.round(v * 100) / 100 : Math.round(v * 20) / 20;
+        if (v > 0 && state.speed === 0) state.speed = 0.01;
         $("speedVal").textContent = formatSpeed(state.speed);
         paintRange(e.target);
     });
