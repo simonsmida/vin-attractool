@@ -575,7 +575,7 @@ const TRAIL_SECONDS = 1.5;            // real-time length of a trail at 1x
 const state = {
     type: "lorenz",
     params: {},                       // live parameter values per attractor
-    count: 1400,
+    count: 800,
     speed: 0.5,
     paused: false,
     trails: true,
@@ -2174,8 +2174,8 @@ function recommendedCount(type) {
     // Fewer particles leave dark space between the streaks, so each comet
     // reads on its own instead of merging into a solid surface.
     const touch = window.matchMedia("(pointer: coarse)").matches;
-    const n = ATTRACTORS[type].count * (touch ? 0.25 : 0.35);
-    return Math.max(500, Math.round(n / 100) * 100);
+    const n = ATTRACTORS[type].count * (touch ? 0.15 : 0.2);
+    return Math.max(300, Math.round(n / 50) * 50);
 }
 
 function restartParticles() {
@@ -2607,7 +2607,7 @@ function butterfly(clientX, clientY) {
     }
     if (best < 0) return;
     const X = ref.pts[3 * best], Y = ref.pts[3 * best + 1], Z = ref.pts[3 * best + 2];
-    const n = Math.max(60, Math.min(500, Math.round(count * 0.18)));
+    const n = Math.max(60, Math.min(500, Math.round(count * 0.25)));
     const eps = r * 1e-6;
     const A = ATTRACTORS[state.type], p = state.params[state.type];
     const phase = Math.random() * 2 * Math.PI;
