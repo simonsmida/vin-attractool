@@ -598,6 +598,7 @@ const state = {
     pendingType: null,
     morph: null,                      // { from, to, t } while Lucky morphs
     lastPreset: {},
+    spot: 0,                          // spotlight on the butterfly cluster, 1 → 0
     tour: null                        // { t, step, spinBefore } during the cinematic tour
 };
 for (const key in ATTRACTORS) state.params[key] = { ...ATTRACTORS[key].params };
@@ -711,6 +712,7 @@ function dyeStart(x, y, z) {
 const pPhase = new Float32Array(MAX_PARTICLES);
 const pOmega = new Float32Array(MAX_PARTICLES);
 const pFlash = new Uint8Array(MAX_PARTICLES);
+const pMark = new Float32Array(MAX_PARTICLES);   // butterfly cluster highlight, 1 → 0
 const FF_GRID = 16;
 const FF_K = [1.15, 0.6];              // coupling: mean, breathing amplitude
 const ffCos = new Float32Array(FF_GRID ** 3), ffSin = new Float32Array(FF_GRID ** 3), ffN = new Float32Array(FF_GRID ** 3);
@@ -762,7 +764,7 @@ function colorT(i) {
 
 /* Palette coordinate and flash level packed for the history (see shader). */
 function packedT(i) {
-    return colorT(i) + 2 * pFlash[i];
+    return colorT(i) + 2 * pFlash[i] + 512 * Math.round(63 * pMark[i]);
 }
 
 function integrate(T) {
@@ -844,6 +846,7 @@ function spawn(i, initial = false) {
     pSpeed[i] = Math.hypot(k1[0], k1[1], k1[2]);
     pDye[i] = initial ? dyeStart(px[i], py[i], pz[i]) : dyeAxis[3];
     if (initial || pOmega[i] === 0) initFirefly(i);
+    pMark[i] = 0;
     resetHistory(i);
 }
 
@@ -1148,12 +1151,25 @@ uniform vec2 uHalf;
 uniform vec2 uOffset;                 // screen offset in pixels
 uniform float uTailCool;               // how far trail tails drift down the palette
 uniform float uAlive;                 // 0..1 weight of the firefly flashes
+uniform float uSpot;                  // 0..1 while a butterfly cluster is in the spotlight
 // History .w packs the palette coordinate c (0..1) and a flash level k
 // (0..255) as c + 2k.
-float flashOf(float w) { return floor(w * 0.5) / 255.0; }
-float colorOf(float w) { return min(1.0, w - 2.0 * floor(w * 0.5) + 0.22 * uAlive * flashOf(w)); }  // a flash also warms the hue a step up the palette
+// A butterfly mark m (0..63) rides on top as + 512m.
+float markOf(float w) { return floor(w / 512.0) / 63.0; }
+float remOf(float w) { return w - 512.0 * floor(w / 512.0); }
+float flashOf(float w) { return floor(remOf(w) * 0.5) / 255.0; }
+float colorOf(float w) {
+    float r = remOf(w);
+    // A flash warms the hue a step up the palette; marked particles burn at its top.
+    float c = min(1.0, r - 2.0 * floor(r * 0.5) + 0.22 * uAlive * flashOf(w));
+    return mix(c, 1.0, markOf(w));
+}
 // Brightness of a particle: dim between flashes, bright at the peak.
-float glowOf(float w) { return mix(1.0, 0.4 + 1.25 * flashOf(w), uAlive); }
+// Marked particles glow white-hot while everything else dims around them.
+float glowOf(float w) {
+    float m = markOf(w);
+    return mix(1.0, 0.4 + 1.25 * flashOf(w), uAlive * (1.0 - m)) * (1.0 - 0.7 * uSpot * (1.0 - m)) * (1.0 + 2.2 * m);
+}
 uniform vec3 uPalette[${PALETTE_SIZE}];
 
 vec4 fetchSample(int i, int age) {
@@ -1436,6 +1452,7 @@ function setSceneUniforms(u, M) {
     gl.uniform2f(u.uOffset, screenOffX(), screenOffY());
     gl.uniform1f(u.uTailCool, 0.5 * (1 - state.dyeMix));
     gl.uniform1f(u.uAlive, state.dyeMix);
+    gl.uniform1f(u.uSpot, state.spot);
     if (glr.paletteFor !== state.palette) {
         state.palette.forEach((c, i) => glr.palette.set([c[0] / 255, c[1] / 255, c[2] / 255], i * 3));
         glr.paletteFor = state.palette;
@@ -1619,6 +1636,7 @@ function frame(now) {
 
     if (!state.paused && state.speed > 0 && count > 0 && dt > 0 && !state.pendingType) {
         if (state.dyeMix > 0) updateFireflies(dt * Math.sqrt(state.speed));
+        if (state.spot > 0) updateSpot(dt);
         advance(dt * state.speed * ATTRACTORS[state.type].timeScale);
         dirty = true;
     }
@@ -2602,8 +2620,7 @@ function onTap(x, y) {
     tapTimer = setTimeout(() => { tapTimer = 0; butterfly(x, y); }, 260);
 }
 
-/* Drop a tight cluster of particles, a millionth of the attractor's size
-   apart, on the attractor point nearest the tap. They travel as one for a
+/* Drop a tight ball of particles, a few % of the attractor across, on the attractor point nearest the tap. They travel as one for a
    moment, then chaos tears them apart until they are spread over the whole
    attractor: sensitive dependence on initial conditions, made visible. */
 function butterfly(clientX, clientY) {
@@ -2627,27 +2644,44 @@ function butterfly(clientX, clientY) {
     }
     if (best < 0) return;
     const X = ref.pts[3 * best], Y = ref.pts[3 * best + 1], Z = ref.pts[3 * best + 2];
-    const n = Math.max(60, Math.min(500, Math.round(count * 0.25)));
-    const eps = r * 1e-6;
+    const n = Math.max(150, Math.min(700, Math.round(count * 0.4)));
+    // A small ball, a few % of the attractor across: it stretches into a
+    // filament at once and is torn over the whole attractor within seconds.
+    const eps = r * 0.03;
     const A = ATTRACTORS[state.type], p = state.params[state.type];
     const phase = Math.random() * 2 * Math.PI;
     for (let k = 0; k < n; k++) {
         const i = Math.min(count - 1, Math.floor((k + Math.random() * 0.999) * count / n));
-        px[i] = X + (Math.random() - 0.5) * eps;
-        py[i] = Y + (Math.random() - 0.5) * eps;
-        pz[i] = Z + (Math.random() - 0.5) * eps;
+        // Uniform in a ball, not a cube.
+        let ux, uy, uz;
+        do { ux = 2 * Math.random() - 1; uy = 2 * Math.random() - 1; uz = 2 * Math.random() - 1; } while (ux * ux + uy * uy + uz * uz > 1);
+        px[i] = X + ux * eps;
+        py[i] = Y + uy * eps;
+        pz[i] = Z + uz * eps;
+        pMark[i] = 1;
         A.deriv(px[i], py[i], pz[i], p, k1);
         pSpeed[i] = Math.hypot(k1[0], k1[1], k1[2]);
         pDye[i] = 1;                  // the brightest colour
         pPhase[i] = phase;            // and flashing in unison, at first
         resetHistory(i);
     }
+    state.spot = 1;
+    state.spotAge = 0;
     dirty = true;
     ripple(clientX, clientY);
     if (!butterflyHinted) {
         butterflyHinted = true;
-        showToast(`Butterfly effect: ${n} particles, a millionth apart`);
+        showToast(`Butterfly effect: ${n} nearly identical starts, torn apart by chaos`);
     }
+}
+
+/* The cluster stays lit for a while, then hands the stage back. */
+const SPOT_HOLD = 18, SPOT_FADE = 8; // seconds: long enough to watch it spread
+function updateSpot(dt) {
+    state.spotAge += dt;
+    const level = state.spotAge < SPOT_HOLD ? 1 : Math.max(0, 1 - (state.spotAge - SPOT_HOLD) / SPOT_FADE);
+    state.spot = level;
+    for (let i = 0; i < count; i++) if (pMark[i] > 0) pMark[i] = level;
 }
 
 function ripple(x, y) {
