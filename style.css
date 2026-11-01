@@ -1086,3 +1086,124 @@ kbd {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ------------------------------------------------ Tune disclosure */
+
+.disclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  height: 28px;
+  padding: 0 10px 0 4px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+.disclosure:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink);
+}
+
+.disclosure svg {
+  width: 16px;
+  height: 16px;
+  transition: transform 0.3s var(--ease);
+}
+
+.disclosure[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+
+.tune {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: tune-in 0.35s var(--ease);
+}
+
+@keyframes tune-in {
+  from { opacity: 0; transform: translateY(-4px); }
+}
+
+/* ------------------------------------------------ Dock toggles */
+
+.dock-btn.toggle[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Discover: busy while the search runs. */
+.chip.busy {
+  pointer-events: none;
+  border-color: var(--accent);
+}
+
+.chip.busy svg {
+  animation: twinkle 1.1s ease-in-out infinite;
+}
+
+@keyframes twinkle {
+  50% { transform: scale(0.7) rotate(45deg); opacity: 0.6; }
+}
+
+/* ------------------------------------------------ Butterfly ripple */
+
+.ripples {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.ripple {
+  position: absolute;
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  opacity: 0;
+  animation: ripple 0.9s var(--ease) forwards;
+}
+
+@keyframes ripple {
+  0% { opacity: 0.9; transform: scale(0.2); }
+  100% { opacity: 0; transform: scale(1.6); }
+}
+
+/* ------------------------------------------------ Cinematic tour */
+
+body.cinema .panel,
+body.cinema .show-panel,
+body.cinema .status-badge {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+body.cinema .panel {
+  transition: opacity 0.8s ease;
+}
+
+.dock {
+  transition: transform 0.45s var(--ease), opacity 0.6s ease;
+}
+
+body.cinema .dock {
+  --dock-shift: 0px;
+}
+
+body.cinema.ui-idle .dock {
+  opacity: 0;
+  pointer-events: none;
+}
+
+body.cinema.ui-idle #canvas {
+  cursor: none;
+}

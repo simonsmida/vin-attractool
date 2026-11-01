@@ -575,7 +575,7 @@ const TRAIL_SECONDS = 1.5;            // real-time length of a trail at 1x
 const state = {
     type: "lorenz",
     params: {},                       // live parameter values per attractor
-    count: 4000,
+    count: 1400,
     speed: 0.5,
     paused: false,
     trails: true,
@@ -591,7 +591,8 @@ const state = {
     sceneFade: 1,                     // dips to 0 while switching attractors
     pendingType: null,
     morph: null,                      // { from, to, t } while Lucky morphs
-    lastPreset: {}
+    lastPreset: {},
+    tour: null                        // { t, step, spinBefore } during the cinematic tour
 };
 for (const key in ATTRACTORS) state.params[key] = { ...ATTRACTORS[key].params };
 
@@ -1607,6 +1608,7 @@ function frame(now) {
     let moving = updateCamera(dt, now);
     if (updateFades(dt)) moving = true;
     if (updateMorph(dt)) moving = true;
+    updateTour(dt);
 
     if (!state.paused && state.speed > 0 && count > 0 && dt > 0 && !state.pendingType) {
         if (state.dyeMix > 0) updateFireflies(dt * Math.sqrt(state.speed));
@@ -1842,7 +1844,9 @@ const pointer = {
     lastX: 0, lastY: 0, lastMove: 0,
     // Multi-touch gesture: centroid and spread of the fingers down.
     n: 0, cx: 0, cy: 0, spread: 0,
-    lastTap: 0
+    lastTap: 0,
+    // A press that barely moves and lets go quickly is a tap (butterfly).
+    tap: false, downX: 0, downY: 0, downT: 0
 };
 const ROTATE_PER_PX = 0.0055;
 
@@ -1875,9 +1879,11 @@ function onPointerDown(e) {
     cam.reset = null;
     cam.velA = cam.velB = 0;              // grabbing stops any glide
     if (pointer.active.size === 1) {
-        pointer.lastX = e.clientX;
-        pointer.lastY = e.clientY;
-        pointer.lastMove = e.timeStamp;
+        pointer.lastX = pointer.downX = e.clientX;
+        pointer.lastY = pointer.downY = e.clientY;
+        pointer.lastMove = pointer.downT = e.timeStamp;
+        // In the tour, a tap on hidden controls only brings them back.
+        pointer.tap = (e.pointerType !== "mouse" || e.button === 0) && !e.shiftKey && !document.body.classList.contains("ui-idle");
         const panButton = e.pointerType === "mouse" && (e.button === 1 || e.button === 2 || e.shiftKey);
         if (panButton) {
             e.preventDefault();
@@ -1888,10 +1894,11 @@ function onPointerDown(e) {
             canvas.classList.add("dragging");
         }
         if (e.pointerType === "touch") {
-            if (e.timeStamp - pointer.lastTap < 300) resetView();
+            if (e.timeStamp - pointer.lastTap < 300) { cancelTap(); resetView(); pointer.tap = false; }
             pointer.lastTap = e.timeStamp;
         }
     } else {
+        pointer.tap = false;
         pointer.dragging = pointer.panning = false;
         canvas.classList.remove("panning");
         beginGesture(e.timeStamp);
@@ -1923,6 +1930,7 @@ function onPointerMove(e) {
         pointer.lastMove = e.timeStamp;
         return;
     }
+    if (pointer.tap && Math.hypot(e.clientX - pointer.downX, e.clientY - pointer.downY) > 6) pointer.tap = false;
     const dx = e.clientX - pointer.lastX, dy = e.clientY - pointer.lastY;
     pointer.lastX = e.clientX;
     pointer.lastY = e.clientY;
@@ -1946,6 +1954,8 @@ function onPointerUp(e) {
         cam.velB = Math.max(-max, Math.min(max, cam.velB));
         pointer.dragging = pointer.panning = false;
         canvas.classList.remove("dragging", "panning");
+        if (pointer.tap && e.type === "pointerup" && e.timeStamp - pointer.downT < 400) onTap(e.clientX, e.clientY);
+        pointer.tap = false;
     } else if (left === 1) {
         // Back to one finger: keep rotating from it, without a jump.
         const [p] = pointer.active.values();
@@ -2037,6 +2047,12 @@ function onKeyDown(e) {
         toggleSpin();
     } else if (e.key === "l" || e.key === "L") {
         lucky();
+    } else if (e.key === "d" || e.key === "D") {
+        discover();
+    } else if (e.key === "v" || e.key === "V") {
+        setTour(!state.tour);
+    } else if (e.key === "Escape" && state.tour) {
+        setTour(false);
     } else if (e.key === "h" || e.key === "H") {
         togglePanel();
     } else if (e.key === "f" || e.key === "F") {
@@ -2105,8 +2121,7 @@ function setSpin(rpm) {
         state.lastSpinRpm = rpm;
         cam.lastInput = Math.min(cam.lastInput, performance.now() - 1200);
     }
-    setRange("spinSpeed", rpm);
-    $("spinSpeedVal").textContent = formatRpm(rpm);
+    $("spinBtn").setAttribute("aria-pressed", String(rpm > 0));
 }
 
 /* Fade out, switch, fade back in. */
@@ -2159,8 +2174,8 @@ function recommendedCount(type) {
     // Fewer particles leave dark space between the streaks, so each comet
     // reads on its own instead of merging into a solid surface.
     const touch = window.matchMedia("(pointer: coarse)").matches;
-    const n = ATTRACTORS[type].count * (touch ? 0.4 : 0.6);
-    return Math.max(1000, Math.round(n / 500) * 500);
+    const n = ATTRACTORS[type].count * (touch ? 0.25 : 0.35);
+    return Math.max(500, Math.round(n / 100) * 100);
 }
 
 function restartParticles() {
@@ -2176,6 +2191,7 @@ function resetParams() {
 
 /* Lucky: morph into a curated preset, never the one already showing. */
 function lucky() {
+    if (state.type === "discovered") { discover(); return; }
     const A = ATTRACTORS[state.type];
     const current = state.params[state.type];
     const isCurrent = p => Object.keys(p.params).every(k => Math.abs(p.params[k] - current[k]) < 1e-6);
@@ -2358,23 +2374,25 @@ function updateStatus() {
 
 const thumbs = {};
 
+function makeCard(type) {
+    const A = ATTRACTORS[type];
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "att-card";
+    card.setAttribute("role", "radio");
+    card.setAttribute("aria-checked", "false");
+    card.dataset.type = type;
+    card.innerHTML = `<canvas class="att-thumb" aria-hidden="true"></canvas><span class="att-name">${A.short || A.name}</span>`;
+    card.title = A.name;
+    card.addEventListener("click", () => setAttractor(type));
+    // The default orbit, sampled once, is redrawn when the palette changes.
+    thumbs[type] = { canvas: card.querySelector("canvas"), orbit: sampleOrbit(A, A.params, THUMB_SAMPLES) };
+    return card;
+}
+
 function buildAttractorCards() {
     const grid = $("attractorGrid");
-    for (const type of Object.keys(ATTRACTORS)) {
-        const A = ATTRACTORS[type];
-        const card = document.createElement("button");
-        card.type = "button";
-        card.className = "att-card";
-        card.setAttribute("role", "radio");
-        card.setAttribute("aria-checked", "false");
-        card.dataset.type = type;
-        card.innerHTML = `<canvas class="att-thumb" aria-hidden="true"></canvas><span class="att-name">${A.short || A.name}</span>`;
-        card.title = A.name;
-        card.addEventListener("click", () => setAttractor(type));
-        grid.appendChild(card);
-        // The default orbit, sampled once, is redrawn when the palette changes.
-        thumbs[type] = { canvas: card.querySelector("canvas"), orbit: sampleOrbit(A, A.params, THUMB_SAMPLES) };
-    }
+    for (const type of Object.keys(ATTRACTORS)) grid.appendChild(makeCard(type));
     // Arrow keys move between cards, as in any radio group.
     grid.addEventListener("keydown", e => {
         const types = Object.keys(ATTRACTORS);
@@ -2443,7 +2461,11 @@ function updateCardFades() {
 }
 
 function drawThumbs() {
-    for (const type in thumbs) {
+    for (const type in thumbs) drawThumb(type);
+}
+
+function drawThumb(type) {
+    {
         const { canvas: c, orbit } = thumbs[type];
         const A = ATTRACTORS[type];
         const r = window.devicePixelRatio > 1 ? 2 : 1;
@@ -2453,7 +2475,7 @@ function drawThumbs() {
         const g = c.getContext("2d");
         g.fillStyle = "#04050a";
         g.fillRect(0, 0, c.width, c.height);
-        if (!orbit) continue;
+        if (!orbit) return;
 
         const M = mul3(quatToMat(viewQuat(A.view)), alignUp(A.up));
         const n = orbit.speeds.length, xs = new Float32Array(n), ys = new Float32Array(n);
@@ -2543,6 +2565,353 @@ function applyAccent() {
     root.setProperty("--accent-soft", `rgba(${r}, ${g}, ${b}, 0.18)`);
 }
 
+// ---- Butterfly effect -------------------------------------------------------
+
+let tapTimer = 0;
+let butterflyHinted = false;
+
+function cancelTap() {
+    clearTimeout(tapTimer);
+    tapTimer = 0;
+}
+
+/* A tap waits a moment so a double-click or double-tap (reset view) can
+   cancel it. In the tour, the first tap only brings the controls back. */
+function onTap(x, y) {
+    cancelTap();
+    tapTimer = setTimeout(() => { tapTimer = 0; butterfly(x, y); }, 260);
+}
+
+/* Drop a tight cluster of particles, a millionth of the attractor's size
+   apart, on the attractor point nearest the tap. They travel as one for a
+   moment, then chaos tears them apart until they are spread over the whole
+   attractor: sensitive dependence on initial conditions, made visible. */
+function butterfly(clientX, clientY) {
+    if (count === 0 || ref.n === 0 || state.pendingType) return;
+    const M = viewMatrix();
+    const [ccx, ccy, ccz] = cam.center;
+    const r = cam.radius, camDist = 4.5 * r, focal = frameScale() * camDist;
+    const ox = width / 2 + screenOffX(), oy = height / 2 - screenOffY();
+    const tx = clientX * dpr, ty = clientY * dpr;
+    let best = -1, bestD = Infinity;
+    for (let j = 0; j < ref.n; j++) {
+        const x = ref.pts[3 * j] - ccx, y = ref.pts[3 * j + 1] - ccy, z = ref.pts[3 * j + 2] - ccz;
+        const vx = M[0] * x + M[1] * y + M[2] * z;
+        const vy = M[3] * x + M[4] * y + M[5] * z;
+        const vz = M[6] * x + M[7] * y + M[8] * z;
+        const w = focal / Math.max(camDist - vz, r * 0.05);
+        const dx = ox + vx * w - tx, dy = oy - vy * w - ty;
+        // Prefer the nearer of overlapping strands.
+        const d = dx * dx + dy * dy - vz / r * 40 * dpr * dpr;
+        if (d < bestD) { bestD = d; best = j; }
+    }
+    if (best < 0) return;
+    const X = ref.pts[3 * best], Y = ref.pts[3 * best + 1], Z = ref.pts[3 * best + 2];
+    const n = Math.max(60, Math.min(500, Math.round(count * 0.18)));
+    const eps = r * 1e-6;
+    const A = ATTRACTORS[state.type], p = state.params[state.type];
+    const phase = Math.random() * 2 * Math.PI;
+    for (let k = 0; k < n; k++) {
+        const i = Math.min(count - 1, Math.floor((k + Math.random() * 0.999) * count / n));
+        px[i] = X + (Math.random() - 0.5) * eps;
+        py[i] = Y + (Math.random() - 0.5) * eps;
+        pz[i] = Z + (Math.random() - 0.5) * eps;
+        A.deriv(px[i], py[i], pz[i], p, k1);
+        pSpeed[i] = Math.hypot(k1[0], k1[1], k1[2]);
+        pDye[i] = 1;                  // the brightest colour
+        pPhase[i] = phase;            // and flashing in unison, at first
+        resetHistory(i);
+    }
+    dirty = true;
+    ripple(clientX, clientY);
+    if (!butterflyHinted) {
+        butterflyHinted = true;
+        showToast(`Butterfly effect: ${n} particles, a millionth apart`);
+    }
+}
+
+function ripple(x, y) {
+    const el = document.createElement("span");
+    el.className = "ripple";
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    $("ripples").appendChild(el);
+    setTimeout(() => el.remove(), 1000);
+}
+
+// ---- Cinematic tour ---------------------------------------------------------
+
+const TOUR_STEP = 24;                 // seconds per scene
+let idleTimer = 0;
+
+/* Controls fade away while the tour plays; any movement brings the dock back
+   for a few seconds. */
+function wakeUI() {
+    document.body.classList.remove("ui-idle");
+    clearTimeout(idleTimer);
+    if (state.tour) idleTimer = setTimeout(() => document.body.classList.add("ui-idle"), 2600);
+}
+
+function setTour(on) {
+    if (!!state.tour === on) return;
+    if (on) {
+        state.tour = { t: 0, step: 0, spinBefore: state.spinRpm };
+        if (state.spinRpm === 0) setSpin(1.2);
+        document.body.classList.add("cinema");
+        showToast("Cinematic tour · Esc to leave");
+    } else {
+        setSpin(state.tour.spinBefore);
+        state.tour = null;
+        document.body.classList.remove("cinema", "ui-idle");
+    }
+    $("tourBtn").setAttribute("aria-pressed", String(on));
+    wakeUI();
+    updateLayout();
+}
+
+/* Every scene either morphs into one of the system's presets or moves on:
+   to the next attractor, and now and then to a freshly discovered one. */
+function updateTour(dt) {
+    const T = state.tour;
+    if (!T || state.paused || dt <= 0) return;
+    T.t += dt;
+    if (T.t < TOUR_STEP) return;
+    T.t = 0;
+    T.step++;
+    const types = Object.keys(ATTRACTORS).filter(k => k !== "discovered");
+    if (T.step % 6 === 5) { discover(); return; }
+    if (T.step % 2 === 0 || ATTRACTORS[state.type].presets.length < 2) {
+        const i = types.indexOf(state.type);
+        setAttractor(types[(i + 1) % types.length]);
+    } else {
+        lucky();
+    }
+}
+
+// ---- Discover: search the space of quadratic flows ---------------------------
+
+/* Random sparse quadratic systems
+       ẋ, ẏ, ż = Σ c · {1, x, y, z, x², y², z², xy, xz, yz}
+   are integrated and kept only if they are bounded, dissipative and
+   chaotic: largest Lyapunov exponent λ₁ > 0 and a Kaplan–Yorke dimension
+   between 2.03 and 2.7 (a strange attractor, not a blob or a near-cycle).
+   This is Sprott's method; about one random system in a few thousand
+   qualifies, which takes a second or two. The search runs in a worker. */
+function discoverySearch(budgetMs) {
+    const t0 = Date.now();
+    const f = (c, x, y, z, o) => {
+        for (let e = 0; e < 3; e++) {
+            const b = e * 10;
+            o[e] = c[b] + c[b + 1] * x + c[b + 2] * y + c[b + 3] * z + c[b + 4] * x * x + c[b + 5] * y * y + c[b + 6] * z * z + c[b + 7] * x * y + c[b + 8] * x * z + c[b + 9] * y * z;
+        }
+    };
+    const a1 = new Float64Array(3), a2 = new Float64Array(3), a3 = new Float64Array(3), a4 = new Float64Array(3);
+    const rk4 = (c, s, h) => {
+        const x = s[0], y = s[1], z = s[2];
+        f(c, x, y, z, a1);
+        f(c, x + h / 2 * a1[0], y + h / 2 * a1[1], z + h / 2 * a1[2], a2);
+        f(c, x + h / 2 * a2[0], y + h / 2 * a2[1], z + h / 2 * a2[2], a3);
+        f(c, x + h * a3[0], y + h * a3[1], z + h * a3[2], a4);
+        for (let d = 0; d < 3; d++) s[d] += h / 6 * (a1[d] + 2 * a2[d] + 2 * a3[d] + a4[d]);
+        return Math.abs(s[0]) + Math.abs(s[1]) + Math.abs(s[2]) < 200;
+    };
+    const coef = () => {
+        if (Math.random() < 0.5) return Math.random() < 0.5 ? 1 : -1;
+        return Math.round((0.2 + Math.random() * 2.8) * (Math.random() < 0.5 ? -10 : 10)) / 10;
+    };
+    const USES = [[1, 4, 7, 8], [2, 5, 7, 9], [3, 6, 8, 9]];   // terms containing x, y, z
+    while (Date.now() - t0 < budgetMs) {
+        const c = new Float64Array(30);
+        const k = 5 + Math.floor(Math.random() * 4);
+        for (let m = 0; m < k; m++) c[Math.floor(Math.random() * 30)] = coef();
+        let ok = true;
+        for (let e = 0; e < 3 && ok; e++) ok = c.subarray(e * 10, e * 10 + 10).some(v => v !== 0);
+        // Every variable must drive some other equation (no decoupled parts).
+        for (let v = 0; v < 3 && ok; v++) ok = [0, 1, 2].some(e => e !== v && USES[v].some(t => c[e * 10 + t] !== 0));
+        if (!ok) continue;
+
+        const h = 0.02, s = [0.1 * (Math.random() - 0.5), 0.1 * (Math.random() - 0.5), 0.1 * (Math.random() - 0.5)];
+        let bounded = true;
+        for (let i = 0; i < 3000 && bounded; i++) bounded = rk4(c, s, h);
+        if (!bounded) continue;
+        const d0 = 1e-8, q = [s[0] + d0, s[1], s[2]];
+        let sum = 0, div = 0;
+        const N = 25000, pts = [], vs = [];
+        for (let i = 0; i < N && bounded; i++) {
+            bounded = rk4(c, s, h) && rk4(c, q, h);
+            const dx = q[0] - s[0], dy = q[1] - s[1], dz = q[2] - s[2];
+            const d = Math.hypot(dx, dy, dz) || 1e-300;
+            sum += Math.log(d / d0);
+            q[0] = s[0] + dx * d0 / d; q[1] = s[1] + dy * d0 / d; q[2] = s[2] + dz * d0 / d;
+            const [x, y, z] = s;
+            div += c[1] + 2 * c[4] * x + c[7] * y + c[8] * z + c[12] + 2 * c[15] * y + c[17] * x + c[19] * z + c[23] + 2 * c[26] * z + c[28] * x + c[29] * y;
+            if (i % 10 === 0) { pts.push(s.slice()); f(c, x, y, z, a1); vs.push(Math.hypot(a1[0], a1[1], a1[2])); }
+            if (i === 3000 && sum < 0) bounded = false;
+        }
+        if (!bounded) continue;
+        const le = sum / (N * h);
+        div /= N;
+        if (!(div < 0) || le < 0.03) continue;
+        const D = 2 + le / Math.abs(div - le);
+        if (D < 2.03 || D > 2.7) continue;
+        vs.sort((u, v) => u - v);
+        const vmed = vs[vs.length >> 1];
+        if (vmed < 1e-3) continue;
+        const mean = [0, 0, 0];
+        for (const p of pts) for (let d = 0; d < 3; d++) mean[d] += p[d] / pts.length;
+        const dist = pts.map(p => Math.hypot(p[0] - mean[0], p[1] - mean[1], p[2] - mean[2])).sort((u, v) => u - v);
+        const r = dist[Math.floor(dist.length * 0.99)];
+        const tc = r / vmed;
+        if (le * tc < 0.06 || le * tc > 2.5) continue;
+        // Not flat: the orbit's covariance must have real thickness.
+        const C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+        for (const p of pts) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) C[i][j] += (p[i] - mean[i]) * (p[j] - mean[j]) / pts.length;
+        const det = C[0][0] * (C[1][1] * C[2][2] - C[1][2] * C[2][1]) - C[0][1] * (C[1][0] * C[2][2] - C[1][2] * C[2][0]) + C[0][2] * (C[1][0] * C[2][1] - C[1][1] * C[2][0]);
+        if (det / (C[0][0] + C[1][1] + C[2][2]) ** 3 < 2e-5) continue;
+        return { c: Array.from(c), s: s.slice(), le, D, tc, pts: pts.filter((_, i) => i % 4 === 0) };
+    }
+    return null;
+}
+
+const discovery = { worker: null, queue: [], pending: false, waiting: false, failed: false, last: "" };
+
+function startDiscoveryWorker() {
+    if (discovery.worker || discovery.failed) return;
+    try {
+        const src = `const discoverySearch = ${discoverySearch.toString()};
+onmessage = () => { let r = null; while (!r) r = discoverySearch(4000); postMessage(r); };`;
+        discovery.worker = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+        discovery.worker.onmessage = e => onDiscovered(e.data);
+        discovery.worker.onerror = () => { discovery.failed = true; discovery.worker = null; discovery.pending = false; refillDiscoveries(); };
+    } catch (err) {
+        discovery.failed = true;
+    }
+}
+
+/* Keep one or two systems ready so Discover feels instant. */
+function refillDiscoveries() {
+    if (discovery.pending || discovery.queue.length >= 2) return;
+    discovery.pending = true;
+    startDiscoveryWorker();
+    if (discovery.worker) { discovery.worker.postMessage("find"); return; }
+    // No worker: search in short slices on the main thread.
+    const slice = () => {
+        const r = discoverySearch(25);
+        if (r) onDiscovered(r); else setTimeout(slice, 16);
+    };
+    setTimeout(slice, 0);
+}
+
+function onDiscovered(sys) {
+    discovery.pending = false;
+    discovery.queue.push(sys);
+    if (discovery.waiting) { discovery.waiting = false; discover(); }
+    refillDiscoveries();
+}
+
+function setDiscoverBusy(on) {
+    const b = $("discoverBtn");
+    b.classList.toggle("busy", on);
+    b.querySelector(".chip-text").textContent = on ? "Searching…" : "Discover";
+}
+
+function discover() {
+    const sys = discovery.queue.shift();
+    if (!sys) {
+        discovery.waiting = true;
+        setDiscoverBusy(true);
+        refillDiscoveries();
+        return;
+    }
+    setDiscoverBusy(false);
+    refillDiscoveries();
+    installDiscovered(sys);
+}
+
+const MONO = ["", "x", "y", "z", "x^2", "y^2", "z^2", "xy", "xz", "yz"];
+const MONO_NAME = ["const", "x", "y", "z", "x²", "y²", "z²", "xy", "xz", "yz"];
+const COEF_SYMS = "abcdefghkmnpqrsuvw";
+
+function installDiscovered(sys) {
+    const terms = [];
+    sys.c.forEach((v, idx) => { if (v !== 0) terms.push({ e: Math.floor(idx / 10), t: idx % 10, v }); });
+    const params = {}, ranges = {}, meta = {};
+    terms.forEach((term, n) => {
+        const key = COEF_SYMS[n];
+        term.key = key;
+        params[key] = term.v;
+        const w = Math.max(0.5, Math.abs(term.v) * 0.5);
+        ranges[key] = { min: +(term.v - w).toFixed(2), max: +(term.v + w).toFixed(2), step: 0.01 };
+        meta[key] = { sym: key, name: `${["ẋ", "ẏ", "ż"][term.e]} · ${MONO_NAME[term.t]}` };
+    });
+    const eq = [0, 1, 2].map(e => [["ẋ", "ẏ", "ż"][e],
+        terms.filter(t => t.e === e).map(t => `{${t.key}}${MONO[t.t]}`).join(" + ")]);
+    const mono = new Float64Array(10);
+    const deriv = (x, y, z, p, out) => {
+        mono[0] = 1; mono[1] = x; mono[2] = y; mono[3] = z;
+        mono[4] = x * x; mono[5] = y * y; mono[6] = z * z;
+        mono[7] = x * y; mono[8] = x * z; mono[9] = y * z;
+        out[0] = out[1] = out[2] = 0;
+        for (let k = 0; k < terms.length; k++) {
+            const t = terms[k];
+            out[t.e] += p[t.key] * mono[t.t];
+        }
+    };
+    // Name it after its coefficients, so the same system keeps its name.
+    let hash = 2166136261;
+    for (const ch of sys.c.join(",")) hash = Math.imul(hash ^ ch.charCodeAt(0), 16777619);
+    const code = (hash >>> 0).toString(36).toUpperCase().slice(-4);
+    // The view that shows the most of it: largest projected spread.
+    let view = [-0.6, 0.3], up = [0, 0, 1], bestArea = -1;
+    for (const u of [[1, 0, 0], [0, 1, 0], [0, 0, 1]]) {
+        for (let turn = 0; turn < Math.PI; turn += Math.PI / 8) {
+            const M = mul3(quatToMat(viewQuat([turn, 0.3])), alignUp(u));
+            let sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+            for (const [x, y, z] of sys.pts) {
+                const X = M[0] * x + M[1] * y + M[2] * z, Y = M[3] * x + M[4] * y + M[5] * z;
+                sx += X; sy += Y; sxx += X * X; syy += Y * Y; sxy += X * Y;
+            }
+            const n = sys.pts.length, vx = sxx / n - (sx / n) ** 2, vy = syy / n - (sy / n) ** 2, cxy = sxy / n - sx * sy / n / n;
+            const area = vx * vy - cxy * cxy;
+            if (area > bestArea) { bestArea = area; view = [turn, 0.3]; up = u; }
+        }
+    }
+    const schemes = Object.keys(SCHEMES).filter(k => k !== discovery.last);
+    const palette = schemes[Math.floor(Math.random() * schemes.length)];
+    discovery.last = palette;
+    const tc = sys.tc;
+    ATTRACTORS.discovered = {
+        name: `Specimen ${code}`,
+        short: `Specimen ${code}`,
+        palette, params, ranges, meta, eq,
+        presets: [{ name: "As found", params: { ...params } }],
+        note: `Found just now in a random search · λ₁ ≈ ${(sys.le * tc).toFixed(2)} per orbit · dimension ≈ ${sys.D.toFixed(2)}`,
+        count: 3000,
+        h: Math.min(0.03, Math.max(0.002, 0.015 * tc)),
+        timeScale: 1.4 * tc,
+        span: 400 * tc,
+        transient: 10 * tc,
+        up, view,
+        seed: sys.s,
+        deriv
+    };
+    state.params.discovered = { ...params };
+    state.lastPreset.discovered = null;
+
+    const grid = $("attractorGrid");
+    const old = grid.querySelector('[data-type="discovered"]');
+    const card = makeCard("discovered");
+    card.classList.add("fresh");
+    if (old) old.replaceWith(card); else grid.prepend(card);
+    drawThumb("discovered");
+    sizeCardList();
+
+    state.morph = null;
+    state.pendingType = "discovered";
+    markSelectedCard("discovered");
+    showToast(`New attractor · Specimen ${code}`);
+}
+
 // ---- Panel, sheet, dialog, fullscreen ------------------------------------
 
 function togglePanel() {
@@ -2573,7 +2942,10 @@ function updateLayout() {
     const panel = $("panel"), dock = document.querySelector(".dock");
     const W = window.innerWidth, H = window.innerHeight, m = 12;
     let left = 0, top = 0, right = W, bottom = H, shift = 0;
-    if (isPhone()) {
+    if (document.body.classList.contains("cinema")) {
+        // Full screen: the controls are hidden; keep a little air.
+        top = 0.05 * H; bottom = 0.95 * H;
+    } else if (isPhone()) {
         panel.classList.remove("collapsed");
         panel.inert = false;
         $("showPanelBtn").hidden = true;
@@ -2616,8 +2988,18 @@ function initUI() {
     $("trailsSwitch").addEventListener("click", toggleTrails);
     document.querySelectorAll("#colorBy [data-mode]").forEach(b => b.addEventListener("click", () => setColorBy(b.dataset.mode)));
     setSpin(state.spinRpm);
-    $("spinSpeed").addEventListener("input", e => setSpin(parseFloat(e.target.value)));
-    $("spinSpeed").addEventListener("dblclick", () => setSpin(1.2));
+    $("spinBtn").addEventListener("click", toggleSpin);
+    // iPhone Safari has no fullscreen API: hide the button rather than offer a dead one.
+    if (!document.fullscreenEnabled) $("fullscreenBtn").hidden = true;
+    $("tourBtn").addEventListener("click", () => setTour(!state.tour));
+    $("discoverBtn").addEventListener("click", discover);
+    $("tuneBtn").addEventListener("click", () => {
+        const open = $("tuneBtn").getAttribute("aria-expanded") !== "true";
+        $("tuneBtn").setAttribute("aria-expanded", String(open));
+        $("tunePanel").hidden = !open;
+    });
+    canvas.addEventListener("dblclick", cancelTap);
+    for (const ev of ["pointermove", "pointerdown", "keydown", "wheel"]) window.addEventListener(ev, wakeUI, { passive: true });
     $("speed").addEventListener("dblclick", e => {
         setRange(e.target, DEFAULT_SPEED);
         e.target.dispatchEvent(new Event("input"));
@@ -2712,4 +3094,12 @@ window.addEventListener("DOMContentLoaded", () => {
     if (window.ResizeObserver) new ResizeObserver(() => updateLayout()).observe($("panel"));
     cam.lastInput = performance.now();
     requestAnimationFrame(frame);
+    // Have a discovery ready before anyone asks, once the page has settled.
+    setTimeout(refillDiscoveries, 1000);
+    // First visit: point out the butterfly effect once.
+    setTimeout(() => {
+        let seen = false;
+        try { seen = localStorage.getItem("attractool-hint") === "1"; localStorage.setItem("attractool-hint", "1"); } catch (err) { /* private mode */ }
+        if (!seen && !state.tour) showToast(`Tip: ${window.matchMedia("(pointer: coarse)").matches ? "tap" : "click"} the attractor to see the butterfly effect`);
+    }, 5000);
 });
