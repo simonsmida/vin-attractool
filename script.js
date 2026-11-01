@@ -1204,6 +1204,7 @@ uniform vec2 uOffset;                 // screen offset in pixels
 uniform float uTailCool;               // how far trail tails drift down the palette
 uniform float uAlive;                 // 0..1 weight of the stretch flares
 uniform float uSpot;                  // 0..1 while a butterfly cluster is in the spotlight
+uniform vec3 uSpark;                  // butterfly colour: a complement of the palette
 // History .w packs the palette coordinate c (0..1) and a flash level k
 // (0..255) as c + 2k.
 // A butterfly mark m (0..63) rides on top as + 512m.
@@ -1304,12 +1305,12 @@ void main() {
     // .w holds the palette coordinate the particle had at that moment, so
     // the trail records its colour history. In speed mode the tail also
     // cools down the palette, like an ember leaving darker smoke behind.
-    vColor = colorAt(mix(colorOf(a.w), colorOf(b.w), t) * (1.0 - uTailCool * u))
+    float mk = markOf(a.w);
+    vColor = mix(colorAt(mix(colorOf(a.w), colorOf(b.w), t) * (1.0 - uTailCool * u)), uSpark, mk)
            * mix(glowOf(a.w), glowOf(b.w), t);
     vColor += vec3(mix(coreOf(a.w), coreOf(b.w), t) * (1.0 - u));
     // Stream particles: short comet tails, so the stream reads as sparks
     // in flight rather than one bright band.
-    float mk = markOf(a.w);
     vColor *= mix(1.0, 0.75, mk);
     vColor = depthTint(vColor, depth);
     // Bright head, long soft decay that reaches exactly zero at the tail.
@@ -1345,7 +1346,7 @@ void main() {
     float depth;
     vec2 s = project(p.xyz, depth);
     gl_Position = vec4(s / uHalf, 0.0, 1.0);
-    vColor = depthTint(colorAt(colorOf(p.w)) * glowOf(p.w) + vec3(coreOf(p.w)), depth);
+    vColor = depthTint(mix(colorAt(colorOf(p.w)), uSpark, markOf(p.w)) * glowOf(p.w) + vec3(coreOf(p.w)), depth);
     vAlpha = uAlpha * mix(0.4, 1.0, depth);
     vSize = uSize * mix(0.8, 1.15, depth) * (1.0 + 0.12 * markOf(p.w));
     gl_PointSize = vSize + 2.0;                    // room for the AA edge
@@ -1522,6 +1523,7 @@ function setSceneUniforms(u, M) {
     gl.uniform1f(u.uTailCool, 0.5 * (1 - state.dyeMix));
     gl.uniform1f(u.uAlive, state.dyeMix);
     gl.uniform1f(u.uSpot, state.spot);
+    gl.uniform3fv(u.uSpark, sparkColor());
     if (glr.paletteFor !== state.palette) {
         state.palette.forEach((c, i) => glr.palette.set([c[0] / 255, c[1] / 255, c[2] / 255], i * 3));
         glr.paletteFor = state.palette;
@@ -2796,7 +2798,7 @@ function butterfly(clientX, clientY) {
     // Reuse particles spread over the whole cloud, so no region empties.
     emitter.stride = Math.max(1, Math.floor(count / n));
     emitter.next = (Math.random() * emitter.stride) | 0;
-    emitter.nozzle = ref.radius * 0.03;
+    emitter.nozzle = ref.radius * 0.09;
     emitter.glow = 1;
     state.spot = Math.max(state.spot, 0.001);
     state.spotAge = 0;
@@ -2804,7 +2806,7 @@ function butterfly(clientX, clientY) {
     ripple(clientX, clientY);
     if (!butterflyHinted) {
         butterflyHinted = true;
-        showToast("Butterfly effect: a stream of almost identical starts, torn apart by chaos");
+        showToast("Butterfly effect: nearby starts, torn apart by chaos");
     }
 }
 
@@ -2828,6 +2830,34 @@ function advanceStream(dtTs) {
     }
 }
 
+/* The stream's colour: the palette's opposite hue, light and saturated, so
+   it stands out against the attractor yet belongs with it. Cached per
+   palette. */
+let sparkFor = null, spark = new Float32Array([1, 1, 1]);
+function sparkColor() {
+    if (sparkFor === state.palette) return spark;
+    sparkFor = state.palette;
+    let a = 0, b = 0;
+    for (const c of state.palette) { const lab = rgbToOklab(c); a += lab[1]; b += lab[2]; }
+    a /= state.palette.length; b /= state.palette.length;
+    const C = Math.hypot(a, b);
+    let rgb;
+    if (C < 0.03) rgb = [255, 244, 228];          // many hues at once: warm white
+    else {
+        // Opposite hue, nudged 20 degrees so it reads as a designed accent.
+        const H = Math.atan2(b, a) + Math.PI + 0.35;
+        let L = 0.86, Cc = 0.17;
+        for (let k = 0; k < 10; k++) {
+            rgb = oklabToRgb([L, Cc * Math.cos(H), Cc * Math.sin(H)]);
+            const back = rgbToOklab(rgb);
+            if (Math.hypot(back[1] - Cc * Math.cos(H), back[2] - Cc * Math.sin(H)) < 0.01) break;
+            Cc *= 0.88;
+        }
+    }
+    spark = new Float32Array(rgb.map(v => v / 255));
+    return spark;
+}
+
 /* Release the particles due during the next stretch T of stream time. */
 function emitStream(T) {
     const A = ATTRACTORS[state.type], p = state.params[state.type];
@@ -2840,7 +2870,7 @@ function emitStream(T) {
         // A soft nozzle: Gaussian-ish offsets, most starts very close.
         let ux, uy, uz;
         do { ux = 2 * Math.random() - 1; uy = 2 * Math.random() - 1; uz = 2 * Math.random() - 1; } while (ux * ux + uy * uy + uz * uz > 1);
-        const k = emitter.nozzle * Math.random();
+        const k = emitter.nozzle * Math.cbrt(Math.random());   // even across the ball
         px[i] = emitter.x + ux * k;
         py[i] = emitter.y + uy * k;
         pz[i] = emitter.z + uz * k;
