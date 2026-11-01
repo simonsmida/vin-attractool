@@ -547,14 +547,36 @@ function buildPalette(scheme) {
 // --------------------------------------------------------------------------
 
 const MAX_PARTICLES = 20000;
-const HISTORY_BUDGET = 160000;        // particles × history length
+// Trail slots (particles × history length). Trails keep their full length
+// up to a few thousand particles, so adding particles adds ink rather than
+// trading trail length for count.
+const HISTORY_BUDGET = window.matchMedia("(pointer: coarse)").matches ? 240000 : 480000;
+const COUNT_MIN = 200;
+const DEFAULT_SPEED = 0.5;         // slow enough to follow individual particles
+
+/* The particle slider is logarithmic: equal moves multiply the count by the
+   same factor (200 → 2,000 → 20,000), which matches how density is seen. */
+function countFromSlider(v) {
+    const n = COUNT_MIN * (MAX_PARTICLES / COUNT_MIN) ** (v / 100);
+    const step = n < 1000 ? 50 : n < 5000 ? 100 : 500;
+    return Math.round(n / step) * step;
+}
+function sliderFromCount(n) {
+    return Math.round(100 * Math.log(n / COUNT_MIN) / Math.log(MAX_PARTICLES / COUNT_MIN));
+}
+/* Energy per particle. It falls more slowly than 1/count, so a dense swarm
+   glows brighter and fuller than a sparse one (the tone map keeps it from
+   clipping), while a few particles read as distinct, bright comets. */
+function particleDensity(n) {
+    return Math.min(1.9, Math.max(0.3, (2500 / Math.max(1, n)) ** 0.3));
+}
 const TRAIL_SECONDS = 1.5;            // real-time length of a trail at 1x
 
 const state = {
     type: "lorenz",
     params: {},                       // live parameter values per attractor
     count: 4000,
-    speed: 1,
+    speed: 0.5,
     paused: false,
     trails: true,
     trailFade: 1,                     // eases toward trails ? 1 : 0
@@ -1446,7 +1468,7 @@ function renderGL() {
         gl.blendFunc(gl.ONE, gl.ONE);
         bindTex(0, glr.posTex);
         // Dense clouds get less energy per particle so structure stays visible.
-        const density = Math.min(1.4, Math.max(0.25, Math.sqrt(2500 / count)));
+        const density = particleDensity(count);
 
         if (state.trailFade > 0 && hist.L > 1) {
             const t = glr.trail;
@@ -1461,7 +1483,9 @@ function renderGL() {
         const p = glr.point;
         gl.useProgram(p.prog);
         setSceneUniforms(p.u, M);
-        gl.uniform1f(p.u.uSize, dpr * Math.min(2.8, Math.max(1.8, 3 - count / 8000)) * Math.min(1.6, Math.sqrt(cam.zoom)));
+        // Heads are larger when there are few of them.
+        const head = 3.6 - 0.45 * Math.log2(Math.max(1, count / COUNT_MIN));
+        gl.uniform1f(p.u.uSize, dpr * Math.min(3.6, Math.max(1.7, head)) * Math.min(1.6, Math.sqrt(cam.zoom)));
         gl.uniform1f(p.u.uAlpha, density * (1.0 - 0.3 * state.trailFade));
         gl.drawArrays(gl.POINTS, 0, count);
         gl.disable(gl.BLEND);
@@ -1513,7 +1537,7 @@ function render2D() {
     // Comet trails, like the WebGL ones: each trail is drawn in a few pieces
     // that thin and fade towards the tail. A subset of particles keeps the
     // CPU cost bounded; light energy is scaled so dense clouds never clip.
-    const density = Math.min(1, Math.sqrt(1500 / count));
+    const density = Math.min(1.4, particleDensity(count) * 0.8);
     if (state.trailFade > 0 && hist.L > 1) {
         const step = Math.max(1, Math.ceil(count / 1500));
         const b = hist.buf, stride = hist.stride * 4, L = hist.L;
@@ -2117,15 +2141,15 @@ function applyAttractor(type) {
     buildParamControls();
 }
 
-/* Each attractor opens with the particle count that renders it best, at 1×
+/* Each attractor opens with the particle count that renders it best, at the default speed
    speed (its time scale is already tuned per attractor). */
 function applyRecommended(type) {
     const n = recommendedCount(type);
-    state.speed = 1;
+    state.speed = DEFAULT_SPEED;
     state.count = n;
-    setRange("speed", 1);
-    $("speedVal").textContent = "1.0×";
-    setRange("particleCount", n);
+    setRange("speed", DEFAULT_SPEED);
+    $("speedVal").textContent = DEFAULT_SPEED.toFixed(1) + "×";
+    setRange("particleCount", sliderFromCount(n));
     $("particleCountVal").textContent = n.toLocaleString("en-US");
 }
 
@@ -2594,6 +2618,14 @@ function initUI() {
     setSpin(state.spinRpm);
     $("spinSpeed").addEventListener("input", e => setSpin(parseFloat(e.target.value)));
     $("spinSpeed").addEventListener("dblclick", () => setSpin(1.2));
+    $("speed").addEventListener("dblclick", e => {
+        setRange(e.target, DEFAULT_SPEED);
+        e.target.dispatchEvent(new Event("input"));
+    });
+    $("particleCount").addEventListener("dblclick", e => {
+        setRange(e.target, sliderFromCount(recommendedCount(state.type)));
+        e.target.dispatchEvent(new Event("input"));
+    });
     $("playBtn").addEventListener("click", togglePause);
     $("restartBtn").addEventListener("click", restartParticles);
     $("resetViewBtn").addEventListener("click", resetView);
@@ -2606,7 +2638,7 @@ function initUI() {
     $("sheetToggle").addEventListener("click", () => { if (isPhone()) toggleSheet(); });
 
     $("particleCount").addEventListener("input", e => {
-        const n = parseInt(e.target.value, 10);
+        const n = countFromSlider(parseFloat(e.target.value));
         $("particleCountVal").textContent = n.toLocaleString("en-US");
         paintRange(e.target);
         setCount(n);
