@@ -547,6 +547,13 @@ function buildPalette(scheme) {
 // --------------------------------------------------------------------------
 
 const MAX_PARTICLES = 20000;
+const IS_TOUCH = window.matchMedia("(pointer: coarse)").matches;
+// The slider's top: phones draw far fewer particles smoothly.
+const COUNT_MAX = IS_TOUCH ? 8000 : MAX_PARTICLES;
+// Particle-steps per frame before the integrator takes longer steps (up to
+// 2x), so a huge swarm at high speed costs a bounded amount of time.
+const STEP_BUDGET = IS_TOUCH ? 24000 : 60000;
+let hScale = 1;
 // Trail slots (particles × history length). Trails keep their full length
 // up to a few thousand particles, so adding particles adds ink rather than
 // trading trail length for count.
@@ -564,12 +571,12 @@ const formatSpeed = s => String(+s.toFixed(2)) + "×";
 /* The particle slider is logarithmic: equal moves multiply the count by the
    same factor (200 → 2,000 → 20,000), which matches how density is seen. */
 function countFromSlider(v) {
-    const n = COUNT_MIN * (MAX_PARTICLES / COUNT_MIN) ** (v / 100);
+    const n = COUNT_MIN * (COUNT_MAX / COUNT_MIN) ** (v / 100);
     const step = n < 1000 ? 50 : n < 5000 ? 100 : 500;
     return Math.round(n / step) * step;
 }
 function sliderFromCount(n) {
-    return Math.round(100 * Math.log(n / COUNT_MIN) / Math.log(MAX_PARTICLES / COUNT_MIN));
+    return Math.round(100 * Math.log(n / COUNT_MIN) / Math.log(COUNT_MAX / COUNT_MIN));
 }
 /* Energy per particle. It falls more slowly than 1/count, so a dense swarm
    glows brighter and fuller than a sparse one (the tone map keeps it from
@@ -767,7 +774,7 @@ function integrate(T) {
     const A = ATTRACTORS[state.type];
     const p = state.params[state.type];
     const f = A.deriv;
-    const n = Math.max(1, Math.ceil(T / A.h));
+    const n = Math.max(1, Math.ceil(T / (A.h * hScale)));
     const h = T / n;
     const h2 = h / 2, h6 = h / 6;
     const esc2 = ref.escape * ref.escape;
@@ -827,6 +834,8 @@ function integrate(T) {
 /* Advance the simulation by T, committing history samples on schedule. */
 function advance(T) {
     const eps = 1e-9;
+    const A = ATTRACTORS[state.type];
+    hScale = Math.min(2, Math.max(1, count * Math.ceil(T / A.h) / STEP_BUDGET));
     while (T > eps) {
         const chunk = Math.min(T, hist.interval - hist.clock);
         integrate(chunk);
@@ -974,7 +983,7 @@ function applyReference(res) {
 // --------------------------------------------------------------------------
 
 function setCount(n) {
-    n = Math.max(0, Math.min(MAX_PARTICLES, n | 0));
+    n = Math.max(0, Math.min(COUNT_MAX, n | 0));
     const old = count;
     count = n;
     allocHistory(old);
@@ -3141,7 +3150,7 @@ function installDiscovered(sys) {
     const eq = [0, 1, 2].map(e => [["ẋ", "ẏ", "ż"][e],
         terms.filter(t => t.e === e).map(t => `{${t.key}}${MONO[t.t]}`).join(" + ")]);
     const mono = new Float64Array(10);
-    const deriv = (x, y, z, p, out) => {
+    let deriv = (x, y, z, p, out) => {
         mono[0] = 1; mono[1] = x; mono[2] = y; mono[3] = z;
         mono[4] = x * x; mono[5] = y * y; mono[6] = z * z;
         mono[7] = x * y; mono[8] = x * z; mono[9] = y * z;
@@ -3151,6 +3160,18 @@ function installDiscovered(sys) {
             out[t.e] += p[t.key] * mono[t.t];
         }
     };
+    // Straight-line code runs several times faster than the generic loop
+    // above; keep the loop where a page policy forbids compiling.
+    try {
+        const MONO_JS = ["1", "x", "y", "z", "x * x", "y * y", "z * z", "x * y", "x * z", "y * z"];
+        const body = [0, 1, 2].map(e => `out[${e}] = ${terms.filter(t => t.e === e)
+            .map(t => `p.${t.key} * ${MONO_JS[t.t]}`).join(" + ") || "0"};`).join("\n");
+        const fast = new Function("x", "y", "z", "p", "out", body);
+        const probe = [0, 0, 0], ref0 = [0, 0, 0], pp = params;
+        fast(0.3, -0.7, 1.1, pp, probe);
+        deriv(0.3, -0.7, 1.1, pp, ref0);
+        if (probe.every((v, i) => Math.abs(v - ref0[i]) < 1e-9)) deriv = fast;
+    } catch (e) { /* keep the loop */ }
     // Name it after its coefficients, so the same system keeps its name.
     let hash = 2166136261;
     for (const ch of sys.c.join(",")) hash = Math.imul(hash ^ ch.charCodeAt(0), 16777619);
