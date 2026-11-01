@@ -632,6 +632,7 @@ const hist = {
 const REF_SAMPLES = 4096;
 const THUMB_SAMPLES = 40000;     // dense enough that thumbnail strokes read as curves
 const ref = {
+    env: { w: 1, h: 1, mx: 0, my: 0 },
     pts: new Float64Array(REF_SAMPLES * 3),
     n: 0,
     center: [0, 0, 0],
@@ -645,6 +646,8 @@ const ref = {
 
 // Camera.
 const cam = {
+    // Screen footprint of the attractor while it turns (see envelope()).
+    env: { w: 1, h: 1, mx: 0, my: 0 },
     q: [1, 0, 0, 0],                  // orientation quaternion [w, x, y, z]
     pendA: 0, pendB: 0,               // drag rotation not yet applied
     velA: 0, velB: 0,                 // angular velocity (rad/s) about screen axes
@@ -957,6 +960,7 @@ function applyReference(res) {
     // Anything this far out has left the attractor; respawning it early
     // means no long stray streaks while it drifts away.
     ref.escape = ref.radius * 2;
+    ref.env = envelope(pts, center, ref.radius);
     ref.speedLo = Math.log(s[Math.floor(REF_SAMPLES * 0.03)] + 1e-9);
     ref.speedHi = Math.log(s[Math.floor(REF_SAMPLES * 0.97)] + 1e-9);
     ref.speedMax = s[Math.floor(REF_SAMPLES * 0.995)];
@@ -1139,15 +1143,47 @@ function viewMatrix() {
 }
 
 /* Fit the attractor into the part of the screen the panel leaves free. */
+const FIT = 0.88;                      // share of the free area the attractor fills
 function frameScale() {
     const w = Math.max(80, cam.fitW), h = Math.max(80, cam.fitH);
-    return 0.45 * Math.min(w, h) / cam.radius * cam.zoom;
+    return FIT * Math.min(w / (2 * cam.env.w), h / (2 * cam.env.h)) * cam.zoom;
+}
+
+/* The attractor's real silhouette on screen, not a bounding sphere: project
+   the reference orbit from the default tilt at every turn of the turntable
+   and take the extent of all of them. Fitting that box (and centring its
+   middle) fills the free area as much as possible, and auto-rotation never
+   pushes the attractor out of view or makes the framing breathe. World
+   units at the focal plane; mx, my is how far the box's middle sits from
+   the centre point, which the screen offset cancels. */
+function envelope(pts, center, radius) {
+    const n = pts.length / 3;
+    if (!n) return { w: radius, h: radius, mx: 0, my: 0 };
+    const tilt = ATTRACTORS[state.type].view[1];
+    const D = 4.5 * radius, TURNS = 32, PICK = 1500;
+    const step = Math.max(1, Math.floor(n / PICK));
+    const xs = [], ys = [];
+    for (let t = 0; t < TURNS; t++) {
+        const M = mul3(quatToMat(viewQuat([2 * Math.PI * t / TURNS, tilt])), alignMatrix);
+        for (let j = 0; j < n; j += step) {
+            const x = pts[3 * j] - center[0], y = pts[3 * j + 1] - center[1], z = pts[3 * j + 2] - center[2];
+            const vz = M[6] * x + M[7] * y + M[8] * z;
+            const k = D / Math.max(D - vz, 0.05 * radius);
+            xs.push((M[0] * x + M[1] * y + M[2] * z) * k);
+            ys.push((M[3] * x + M[4] * y + M[5] * z) * k);
+        }
+    }
+    const lo = a => a[Math.floor(a.length * 0.0005)], hi = a => a[Math.floor(a.length * 0.9995)];
+    const fx = Float64Array.from(xs).sort(), fy = Float64Array.from(ys).sort();
+    const x0 = lo(fx), x1 = hi(fx), y0 = lo(fy), y1 = hi(fy);
+    const floor = 0.05 * radius;      // flat systems still get a sensible size
+    return { w: Math.max(floor, (x1 - x0) / 2), h: Math.max(floor, (y1 - y0) / 2), mx: (x0 + x1) / 2, my: (y0 + y1) / 2 };
 }
 
 /* Where the attractor's centre sits on screen: the middle of the free area
    plus the viewer's pan (device px from the screen centre, y up). */
-const screenOffX = () => cam.offX + cam.panX;
-const screenOffY = () => cam.offY + cam.panY;
+const screenOffX = () => cam.offX + cam.panX - frameScale() * cam.env.mx;
+const screenOffY = () => cam.offY + cam.panY - frameScale() * cam.env.my;
 
 // --------------------------------------------------------------------------
 // WebGL 2 renderer
@@ -1845,6 +1881,11 @@ function updateCamera(dt, now) {
     const lr = Math.log(cam.radius), lrt = Math.log(ref.radius);
     if (Math.abs(lrt - lr) > 1e-4) { cam.radius = Math.exp(lr + (lrt - lr) * ease); moving = true; }
     else cam.radius = ref.radius;
+    for (const key of ["w", "h", "mx", "my"]) {
+        const d = ref.env[key] - cam.env[key];
+        if (Math.abs(d) > ref.radius * 1e-4) { cam.env[key] += d * ease; moving = true; }
+        else cam.env[key] = ref.env[key];
+    }
 
     return moving;
 }
@@ -2030,12 +2071,9 @@ function onPointerUp(e) {
     noteInput();
 }
 
-/* Wheel: a mouse wheel zooms toward the cursor. On a trackpad, the
-   two-finger scroll rotates (like two fingers on a touch screen) and the
-   pinch, which browsers send as ctrl + wheel, zooms toward the cursor.
-   Shift + scroll pans. Trackpad scrolls are recognised by their fine,
-   pixel-sized deltas; the guess sticks for the rest of a gesture. */
-const wheel = { trackpad: false, last: 0 };
+/* Wheel: scrolling zooms toward the cursor, with a mouse wheel or a
+   trackpad alike; a trackpad pinch (ctrl + wheel to the browser) zooms too.
+   Shift + scroll pans. Dragging rotates. */
 function onWheel(e) {
     e.preventDefault();
     noteInput();
@@ -2048,21 +2086,11 @@ function onWheel(e) {
         zoomAt(Math.exp(-Math.max(-50, Math.min(50, dy)) * 0.01), e.clientX, e.clientY, true);
         return;
     }
-    if (e.timeStamp - wheel.last > 250) {
-        const legacy = e.wheelDeltaY;
-        wheel.trackpad = e.deltaMode === 0 && (dx !== 0 ||
-            (legacy ? Math.abs(legacy) !== 120 && legacy === -3 * e.deltaY : !Number.isInteger(dy) || Math.abs(dy) < 40));
-    }
-    wheel.last = e.timeStamp;
     if (e.shiftKey) {
         // Shift + scroll pans (browsers may already turn it into deltaX).
-        if (!wheel.trackpad && dx === 0) { dx = dy; dy = 0; }
+        if (dx === 0) { dx = dy; dy = 0; }
         panBy(-dx * dpr, dy * dpr, true);
-    } else if (wheel.trackpad) {
-        cam.velA = cam.velB = 0;
-        cam.pendA -= dx * ROTATE_PER_PX;
-        cam.pendB -= dy * ROTATE_PER_PX;
-    } else {
+    } else if (dy !== 0) {
         dy = Math.max(-200, Math.min(200, dy));
         zoomAt(Math.exp(-dy * 0.0015), e.clientX, e.clientY, false);
     }
@@ -2117,8 +2145,6 @@ function onKeyDown(e) {
         togglePanel();
     } else if (e.key === "f" || e.key === "F") {
         toggleFullscreen();
-    } else if (e.key === "?") {
-        openHelp();
     }
 }
 
@@ -2198,6 +2224,7 @@ function applyAttractor(type) {
     computeReference();
     cam.center = ref.center.slice();
     cam.radius = ref.radius;
+    cam.env = { ...ref.env };
     cam.q = viewQuat(ATTRACTORS[type].view);
     cam.velA = cam.velB = cam.pendA = cam.pendB = 0;
     cam.reset = null;
@@ -2497,16 +2524,20 @@ function revealCard(c) {
     }
 }
 
-/* Desktop: the list shows two full rows and a glimpse of the third, which
-   fades out; fades appear at whichever edge has more cards beyond it. */
+/* Desktop: the list shows up to two full rows and a glimpse of the third,
+   which fades out; fades appear at whichever edge has more cards beyond it. */
 function sizeCardList() {
     const grid = $("attractorGrid"), card = grid.querySelector(".att-card");
     if (!card) return;
     if (isPhone()) {
         grid.style.maxHeight = "";
+        grid.style.minHeight = "";
     } else {
         const rowH = card.getBoundingClientRect().height, gap = 8;
         grid.style.maxHeight = `${Math.round(2 * rowH + gap + 0.42 * rowH + 6)}px`;
+        // On short screens the list gives up height first, so the rest of
+        // the panel fits without scrolling; it never drops below about a row.
+        grid.style.minHeight = `${Math.round(1.35 * rowH + 6)}px`;
     }
     updateCardFades();
 }
@@ -3145,11 +3176,6 @@ function updateLayout() {
     cam.fitHTarget = h * dpr;
 }
 
-function openHelp() {
-    const d = $("helpDialog");
-    if (!d.open) d.showModal();
-}
-
 function toggleFullscreen() {
     if (document.fullscreenElement) document.exitFullscreen?.();
     else document.documentElement.requestFullscreen?.().catch(() => {});
@@ -3193,9 +3219,6 @@ function initUI() {
     $("restartBtn").addEventListener("click", restartParticles);
     $("resetViewBtn").addEventListener("click", resetView);
     $("fullscreenBtn").addEventListener("click", toggleFullscreen);
-    $("helpBtn").addEventListener("click", openHelp);
-    $("helpClose").addEventListener("click", () => $("helpDialog").close());
-    $("helpDialog").addEventListener("click", e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
     $("collapseBtn").addEventListener("click", togglePanel);
     $("showPanelBtn").addEventListener("click", togglePanel);
     $("sheetToggle").addEventListener("click", () => { if (isPhone()) toggleSheet(); });

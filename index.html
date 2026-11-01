@@ -61,16 +61,18 @@
             <section class="block" aria-labelledby="systemLabel">
                 <div class="block-head">
                     <h2 class="label" id="systemLabel">Equations</h2>
+                    <div class="chips">
+                    <button class="chip" id="tuneBtn" type="button" aria-expanded="false" aria-controls="tunePanel" title="Adjust the parameters by hand">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></svg>
+                        Tune
+                    </button>
                     <button class="chip" id="luckyBtn" type="button" title="Morph into a curated preset (L)">
                         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4" /><circle class="fill" cx="8.5" cy="8.5" r="1.4" /><circle class="fill" cx="15.5" cy="15.5" r="1.4" /><circle class="fill" cx="12" cy="12" r="1.4" /></svg>
                         Surprise me
                     </button>
+                    </div>
                 </div>
                 <div class="equations" id="equations" aria-live="polite"></div>
-                <button class="disclosure" id="tuneBtn" type="button" aria-expanded="false" aria-controls="tunePanel">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
-                    Tune parameters
-                </button>
                 <div class="tune" id="tunePanel" hidden>
                     <div class="params" id="params"></div>
                     <button class="text-btn" id="resetParamsBtn" type="button" disabled>Restore defaults</button>
@@ -78,7 +80,13 @@
             </section>
 
             <section class="block" aria-labelledby="displayLabel">
-                <h2 class="label" id="displayLabel">Display</h2>
+                <div class="block-head">
+                    <h2 class="label" id="displayLabel">Display</h2>
+                    <button class="switch compact" id="trailsSwitch" type="button" role="switch" aria-checked="true" title="Light trails (T)">
+                        <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+                        Light trails
+                    </button>
+                </div>
                 <div class="control">
                     <div class="control-row">
                         <span id="paletteLabel">Colour</span>
@@ -89,6 +97,7 @@
                     </div>
                     <div class="palette-row" id="paletteRow" role="radiogroup" aria-labelledby="paletteLabel"></div>
                 </div>
+                <div class="control-pair">
                 <div class="control">
                     <div class="control-row">
                         <label for="particleCount">Particles</label>
@@ -103,19 +112,10 @@
                     </div>
                     <input type="range" id="speed" min="0" max="100" step="0.5" value="43.5" />
                 </div>
-                <div class="switch-row">
-                    <button class="switch" id="trailsSwitch" type="button" role="switch" aria-checked="true">
-                        <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
-                        Light trails
-                    </button>
                 </div>
             </section>
         </div>
 
-        <footer class="panel-foot">
-            <span>Click the attractor to see the butterfly effect</span>
-            <button class="text-btn" id="helpBtn" type="button">Shortcuts</button>
-        </footer>
     </aside>
 
     <button class="show-panel" id="showPanelBtn" type="button" title="Show controls (H)" aria-label="Show controls" hidden>
@@ -154,38 +154,6 @@
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <div class="status-badge" id="statusBadge" role="status" hidden></div>
     <div class="fps" id="fps" hidden></div>
-
-    <dialog class="dialog" id="helpDialog" aria-labelledby="helpTitle">
-        <div class="dialog-head">
-            <h2 id="helpTitle">Shortcuts</h2>
-            <button class="icon-btn" id="helpClose" type="button" aria-label="Close">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
-            </button>
-        </div>
-        <dl class="keys">
-            <dt><kbd>Click</kbd> <kbd>Tap</kbd></dt><dd>Butterfly effect: release a tiny ball of particles and watch chaos tear nearly identical starts across the attractor</dd>
-            <dt><kbd>Drag</kbd></dt><dd>Rotate in any direction; let go while moving to glide</dd>
-            <dt><kbd>Right-drag</kbd> <kbd>Shift</kbd>+<kbd>Drag</kbd></dt><dd>Move the view (also <kbd>Shift</kbd>+<kbd>Scroll</kbd>)</dd>
-            <dt><kbd>Two fingers</kbd></dt><dd>Rotate on a touch screen or trackpad; pinch to zoom</dd>
-            <dt><kbd>Three fingers</kbd></dt><dd>Move the view on a touch screen</dd>
-            <dt><kbd>Scroll</kbd></dt><dd>Zoom toward the cursor with a mouse wheel</dd>
-            <dt><kbd>Double-click</kbd></dt><dd>Reset the view (also centres it)</dd>
-            <dt><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Rotate; with <kbd>Shift</kbd>, move</dd>
-            <dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>Zoom</dd>
-            <dt><kbd>Space</kbd></dt><dd>Pause or resume</dd>
-            <dt><kbd>L</kbd></dt><dd>Surprise me: morph into a preset</dd>
-            <dt><kbd>D</kbd></dt><dd>Discover a new chaotic attractor</dd>
-            <dt><kbd>V</kbd></dt><dd>Cinematic tour (<kbd>Esc</kbd> to leave)</dd>
-            <dt><kbd>T</kbd></dt><dd>Light trails on or off</dd>
-            <dt><kbd>C</kbd></dt><dd>Alive colouring or colour by speed</dd>
-            <dt><kbd>S</kbd></dt><dd>Auto-rotate on or off</dd>
-            <dt><kbd>R</kbd></dt><dd>Reset the view</dd>
-            <dt><kbd>Enter</kbd></dt><dd>Restart particles</dd>
-            <dt><kbd>H</kbd></dt><dd>Hide or show the controls</dd>
-            <dt><kbd>F</kbd></dt><dd>Full screen</dd>
-        </dl>
-        <p class="dialog-note">Alive colouring lets each particle carry its colour through the flow and lights it by the local Lyapunov exponent: particles blaze where the attractor stretches and folds, where neighbouring paths are torn apart, and sink to embers where the flow coasts. Speed colouring shows how fast each particle moves. Double-click a slider to restore its default.</p>
-    </dialog>
 
     <script src="script.js"></script>
     <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-MHHFLLVC" height="0" width="0"

@@ -205,7 +205,33 @@ svg .fill {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 18px 0;
+  padding: 16px 0;
+}
+
+.chips {
+  display: flex;
+  gap: 6px;
+}
+
+.chip[aria-expanded="true"] {
+  border-color: color-mix(in oklab, var(--accent) 45%, transparent);
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.control-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+/* A small switch that sits in a block heading. */
+.switch.compact {
+  gap: 8px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  font-size: 12px;
 }
 
 .block + .block {
@@ -233,16 +259,6 @@ svg .fill {
   font-weight: 500;
 }
 
-.panel-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 18px 14px;
-  border-top: 1px solid var(--line);
-  color: var(--ink-3);
-  font-size: 12px;
-}
 
 /* ------------------------------------------------------ Attractor cards */
 
@@ -368,11 +384,11 @@ svg .fill {
   align-items: baseline;
   column-gap: 8px;
   row-gap: 4px;
-  padding: 12px 14px;
+  padding: 10px 14px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: rgba(0, 0, 0, 0.3);
-  font: 400 16.5px/1.5 var(--math);
+  font: 400 16.5px/1.4 var(--math);
   overflow-x: auto;
 }
 
@@ -643,13 +659,6 @@ input[type="range"]:focus-visible::-moz-range-thumb {
   color: var(--ink);
 }
 
-.switch-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  padding-top: 4px;
-}
-
 .switch {
   display: flex;
   align-items: center;
@@ -846,80 +855,41 @@ input[type="range"]:focus-visible::-moz-range-thumb {
   pointer-events: none;
 }
 
-/* -------------------------------------------------------------- Dialog */
-
-.dialog {
-  width: min(460px, calc(100vw - 32px));
-  max-height: calc(100vh - 48px);
-  padding: 0;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  background: var(--glass-strong);
-  color: var(--ink);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
-}
-
-.dialog::backdrop {
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(3px);
-}
-
-.dialog-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 14px 10px 20px;
-}
-
-.dialog h2 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 700;
-}
-
-.keys {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: 10px 16px;
-  margin: 0;
-  padding: 4px 20px 16px;
-}
-
-.keys dt {
-  display: flex;
-  align-items: flex-start;
-  align-self: start;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.keys dd {
-  margin: 0;
-  color: var(--ink-2);
-}
-
-kbd {
-  display: inline-block;
-  min-width: 24px;
-  padding: 2px 7px;
-  border: 1px solid var(--line-strong);
-  border-bottom-width: 2px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--ink);
-  font: 500 11.5px/1.5 var(--mono);
-  text-align: center;
-}
-
-.dialog-note {
-  margin: 0;
-  padding: 12px 20px 18px;
-  border-top: 1px solid var(--line);
-  color: var(--ink-3);
-  font-size: 12.5px;
-}
-
 /* ------------------------------------------------------- Phone layout */
+
+/* Desktop: the panel never needs to scroll for its basic controls; the
+   attractor list (which scrolls on its own) shrinks to make room. */
+@media (min-width: 761px) {
+  /* The panel is as tall as its content, never padded with empty glass. */
+  .panel {
+    bottom: auto;
+    max-height: calc(100vh - 2 * var(--gap));
+    max-height: calc(100dvh - 2 * var(--gap));
+  }
+
+  .panel-body {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .panel-body > .block {
+    flex: none;
+  }
+
+  .panel-body > .block:first-child {
+    flex: 0 1 auto;
+    min-height: 0;
+  }
+
+  .attractor-grid {
+    flex: 0 1 auto;
+    grid-auto-rows: max-content;      /* cards keep their size; the list scrolls */
+  }
+
+  .att-card > * {
+    flex: none;
+  }
+}
 
 @media (max-width: 760px) {
   :root {
@@ -978,8 +948,7 @@ kbd {
     color: var(--ink-3);
   }
 
-  .panel.sheet-closed .panel-body,
-  .panel-foot {
+  .panel.sheet-closed .panel-body {
     display: none;
   }
 
@@ -1087,38 +1056,7 @@ kbd {
   }
 }
 
-/* ------------------------------------------------ Tune disclosure */
-
-.disclosure {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  align-self: flex-start;
-  height: 28px;
-  padding: 0 10px 0 4px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--ink-2);
-  font-size: 12.5px;
-  font-weight: 600;
-  transition: color 0.2s ease, background 0.2s ease;
-}
-
-.disclosure:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--ink);
-}
-
-.disclosure svg {
-  width: 16px;
-  height: 16px;
-  transition: transform 0.3s var(--ease);
-}
-
-.disclosure[aria-expanded="true"] svg {
-  transform: rotate(90deg);
-}
+/* ------------------------------------------------ Tune panel */
 
 .tune {
   display: flex;
