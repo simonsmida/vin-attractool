@@ -701,56 +701,46 @@ function dyePlane(x, y, z) {
 function dyeStart(x, y, z) {
     return Math.max(DYE_LO, Math.min(1, 0.6 + 0.6 * dyePlane(x, y, z)));
 }
-/* Fireflies: every particle is a little oscillator that flashes once per
-   cycle. Each one is pulled toward the average phase of the particles
-   currently near it (Kuramoto coupling on a coarse spatial grid), while
-   their natural rhythms differ slightly. Near the coupling threshold this
-   gives partial, ever-changing synchrony: clusters fall into step, waves of
-   light travel along the streams and dissolve again as chaos mixes the
-   swarm. The coupling also breathes slowly, so the collective drifts
-   between shimmering and pulsing in unison. */
-const pPhase = new Float32Array(MAX_PARTICLES);
-const pOmega = new Float32Array(MAX_PARTICLES);
-const pFlash = new Uint8Array(MAX_PARTICLES);
-const pMark = new Float32Array(MAX_PARTICLES);   // butterfly cluster highlight, 1 → 0
-const FF_GRID = 16;
-const FF_K = [1.15, 0.6];              // coupling: mean, breathing amplitude
-const ffCos = new Float32Array(FF_GRID ** 3), ffSin = new Float32Array(FF_GRID ** 3), ffN = new Float32Array(FF_GRID ** 3);
-const ffBin = new Uint16Array(MAX_PARTICLES);
-let ffClock = 0;
-function initFirefly(i) {
-    pPhase[i] = Math.random() * 2 * Math.PI;
-    // ~0.6 flashes per second, with a spread of rhythms.
-    const g = (Math.random() + Math.random() + Math.random() - 1.5) / 1.5;
-    pOmega[i] = 2 * Math.PI * (0.6 + 0.3 * g);
+/* Alive: light follows the chaos itself. Each particle carries a tangent
+   vector, a tiny separation from an imaginary twin, evolved with the flow's
+   Jacobian. Its growth rate is the local Lyapunov exponent: how hard the
+   flow is tearing neighbouring trajectories apart right here. Particles
+   flare as they pass through the regions where the attractor stretches and
+   folds (where its future is decided) and sink to embers where the flow
+   coasts and contracts. Because the stretching zones are fixed in the
+   attractor, every orbit brightens as it passes through them: the whole
+   swarm pulses with its own dynamics, waves of light running along the
+   streams. */
+const tvx = new Float32Array(MAX_PARTICLES), tvy = new Float32Array(MAX_PARTICLES), tvz = new Float32Array(MAX_PARTICLES);
+const pStretch = new Float32Array(MAX_PARTICLES);   // smoothed local stretching rate (1 / sim time)
+const pFlash = new Uint8Array(MAX_PARTICLES);       // flare level 0..255 for the shaders
+const pMark = new Float32Array(MAX_PARTICLES);      // butterfly cluster highlight, 1 → 0
+const k5 = new Float64Array(3);
+function initTangent(i) {
+    let a, b, c, l;
+    do { a = Math.random() - 0.5; b = Math.random() - 0.5; c = Math.random() - 0.5; l = Math.hypot(a, b, c); } while (l < 0.05);
+    tvx[i] = a / l; tvy[i] = b / l; tvz[i] = c / l;
+    pStretch[i] = 0;
 }
-function updateFireflies(dt) {
-    if (dt <= 0 || count === 0) return;
-    ffClock += dt;
-    const K = FF_K[0] + FF_K[1] * Math.sin(2 * Math.PI * ffClock / 34);
-    const c = ref.center, inv = FF_GRID / (2.2 * ref.radius), G = FF_GRID;
-    ffCos.fill(0); ffSin.fill(0); ffN.fill(0);
+/* Map stretching to flare against running percentiles of the swarm, so
+   every attractor and parameter set uses the full range: roughly the lower
+   half rests as embers and the most stretched few percent blaze. */
+const glowSample = new Float32Array(512);
+let glowLo = 0, glowHi = 0;
+function updateGlow(dt) {
+    if (count === 0) return;
+    const m = Math.min(512, count);
+    for (let k = 0; k < m; k++) glowSample[k] = pStretch[(Math.random() * count) | 0];
+    const s = glowSample.subarray(0, m).sort();
+    const lo = s[Math.floor(m * 0.4)], hi = s[Math.floor(m * 0.97)];
+    const a = glowHi === 0 && glowLo === 0 ? 1 : 1 - Math.exp(-dt / 1.2);
+    glowLo += (lo - glowLo) * a;
+    glowHi += (hi - glowHi) * a;
+    const inv = 1 / Math.max(1e-6, glowHi - glowLo);
     for (let i = 0; i < count; i++) {
-        const gx = Math.min(G - 1, Math.max(0, ((px[i] - c[0]) * inv + G / 2) | 0));
-        const gy = Math.min(G - 1, Math.max(0, ((py[i] - c[1]) * inv + G / 2) | 0));
-        const gz = Math.min(G - 1, Math.max(0, ((pz[i] - c[2]) * inv + G / 2) | 0));
-        const b = (gx * G + gy) * G + gz;
-        ffBin[i] = b;
-        ffCos[b] += Math.cos(pPhase[i]);
-        ffSin[b] += Math.sin(pPhase[i]);
-        ffN[b]++;
-    }
-    const TAU = 2 * Math.PI;
-    for (let i = 0; i < count; i++) {
-        const b = ffBin[i];
-        // Kuramoto: dθ/dt = ω + K·R·sin(ψ − θ), with R·e^{iψ} the mean
-        // phasor of the bin, i.e. (Σcos, Σsin) / N.
-        let th = pPhase[i];
-        th += (pOmega[i] + K * (ffSin[b] * Math.cos(th) - ffCos[b] * Math.sin(th)) / ffN[b]) * dt;
-        if (th > TAU) th -= TAU;
-        pPhase[i] = th;
-        const f = 0.5 + 0.5 * Math.cos(th);
-        pFlash[i] = Math.round(255 * f * f * f * f);
+        let f = (pStretch[i] - glowLo) * inv;
+        f = f < 0 ? 0 : f > 1 ? 1 : f;
+        pFlash[i] = Math.round(255 * f * f * (3 - 2 * f));
     }
 }
 
@@ -781,11 +771,23 @@ function integrate(T) {
     updateDyeField();
     const paint = dyeAxis[3], n0 = dyeAxis[0], n1 = dyeAxis[1], n2 = dyeAxis[2];
 
+    const eps = 1e-5 * ref.radius;
+    const glow = state.dyeMix > 0;
+    // Stretching is smoothed over about a third of a second of viewing.
+    const relax = 1 - Math.exp(-T / (0.35 * A.timeScale));
     for (let i = 0; i < count; i++) {
         let x = px[i], y = py[i], z = pz[i];
         const px0 = x, py0 = y, pz0 = z;
+        let vx = tvx[i], vy = tvy[i], vz = tvz[i];
         for (let s = 0; s < n; s++) {
             f(x, y, z, p, k1);
+            if (glow) {
+                // Tangent: v += h · J v, with J v by a forward difference.
+                f(x + eps * vx, y + eps * vy, z + eps * vz, p, k5);
+                vx += h * (k5[0] - k1[0]) / eps;
+                vy += h * (k5[1] - k1[1]) / eps;
+                vz += h * (k5[2] - k1[2]) / eps;
+            }
             f(x + h2 * k1[0], y + h2 * k1[1], z + h2 * k1[2], p, k2);
             f(x + h2 * k2[0], y + h2 * k2[1], z + h2 * k2[2], p, k3);
             f(x + h * k3[0], y + h * k3[1], z + h * k3[2], p, k4);
@@ -802,6 +804,13 @@ function integrate(T) {
         }
         px[i] = x; py[i] = y; pz[i] = z;
         pSpeed[i] = Math.hypot(k1[0], k1[1], k1[2]);
+        if (glow) {
+            const g = Math.hypot(vx, vy, vz);
+            if (g > 0 && Number.isFinite(g)) {
+                pStretch[i] += (Math.log(g) / T - pStretch[i]) * relax;
+                tvx[i] = vx / g; tvy[i] = vy / g; tvz[i] = vz / g;
+            } else initTangent(i);
+        }
         // Crossed the paint plane during this step: pick up the paint.
         const before = (px0 - cx) * n0 + (py0 - cy) * n1 + (pz0 - cz) * n2;
         const after = dx * n0 + dy * n1 + dz * n2;
@@ -845,13 +854,15 @@ function spawn(i, initial = false) {
     f(px[i], py[i], pz[i], state.params[state.type], k1);
     pSpeed[i] = Math.hypot(k1[0], k1[1], k1[2]);
     pDye[i] = initial ? dyeStart(px[i], py[i], pz[i]) : dyeAxis[3];
-    if (initial || pOmega[i] === 0) initFirefly(i);
+    initTangent(i);
+    pFlash[i] = 0;
     pMark[i] = 0;
     resetHistory(i);
 }
 
 function spawnAll() {
     updateDyeField();
+    glowLo = glowHi = 0;              // re-learn the flare range at once
     for (let i = 0; i < count; i++) spawn(i, true);
     dirty = true;
 }
@@ -1150,7 +1161,7 @@ uniform float uFocal, uCamDist, uRadius;
 uniform vec2 uHalf;
 uniform vec2 uOffset;                 // screen offset in pixels
 uniform float uTailCool;               // how far trail tails drift down the palette
-uniform float uAlive;                 // 0..1 weight of the firefly flashes
+uniform float uAlive;                 // 0..1 weight of the stretch flares
 uniform float uSpot;                  // 0..1 while a butterfly cluster is in the spotlight
 // History .w packs the palette coordinate c (0..1) and a flash level k
 // (0..255) as c + 2k.
@@ -1161,14 +1172,15 @@ float flashOf(float w) { return floor(remOf(w) * 0.5) / 255.0; }
 float colorOf(float w) {
     float r = remOf(w);
     // A flash warms the hue a step up the palette; marked particles burn at its top.
-    float c = min(1.0, r - 2.0 * floor(r * 0.5) + 0.22 * uAlive * flashOf(w));
+    float c = min(1.0, r - 2.0 * floor(r * 0.5) + 0.3 * uAlive * flashOf(w));
     return mix(c, 1.0, markOf(w));
 }
 // Brightness of a particle: dim between flashes, bright at the peak.
 // Marked particles glow white-hot while everything else dims around them.
 float glowOf(float w) {
     float m = markOf(w);
-    return mix(1.0, 0.4 + 1.25 * flashOf(w), uAlive * (1.0 - m)) * (1.0 - 0.7 * uSpot * (1.0 - m)) * (1.0 + 2.2 * m);
+    float f = flashOf(w);
+    return mix(1.0, 0.45 + 1.6 * f, uAlive * (1.0 - m)) * (1.0 - 0.7 * uSpot * (1.0 - m)) * (1.0 + 2.2 * m);
 }
 uniform vec3 uPalette[${PALETTE_SIZE}];
 
@@ -1182,6 +1194,12 @@ vec2 project(vec3 p, out float depth) {
     float w = uFocal / max(uCamDist - v.z, uRadius * 0.05);
     depth = clamp((v.z / uRadius + 1.0) * 0.5, 0.0, 1.0);
     return v.xy * w + uOffset;
+}
+// The hottest flares get a white core.
+float coreOf(float w) { float f = flashOf(w); return 0.4 * uAlive * f * f * f; }
+// Atmospheric depth: the far side recedes, slightly cooler and dimmer.
+vec3 depthTint(vec3 c, float depth) {
+    return c * mix(vec3(0.55, 0.62, 0.8), vec3(1.05), depth);
 }
 vec3 colorAt(float t) {
     t = clamp(t, 0.0, 1.0);
@@ -1247,6 +1265,8 @@ void main() {
     // cools down the palette, like an ember leaving darker smoke behind.
     vColor = colorAt(mix(colorOf(a.w), colorOf(b.w), t) * (1.0 - uTailCool * u))
            * mix(glowOf(a.w), glowOf(b.w), t);
+    vColor += vec3(mix(coreOf(a.w), coreOf(b.w), t) * (1.0 - u));
+    vColor = depthTint(vColor, depth);
     // Bright head, long soft decay that reaches exactly zero at the tail.
     float fade = exp(-4.2 * u) * (1.0 - u * u);
     // Thin lines cover less than a pixel; keep their energy constant.
@@ -1280,7 +1300,7 @@ void main() {
     float depth;
     vec2 s = project(p.xyz, depth);
     gl_Position = vec4(s / uHalf, 0.0, 1.0);
-    vColor = colorAt(colorOf(p.w)) * glowOf(p.w);
+    vColor = depthTint(colorAt(colorOf(p.w)) * glowOf(p.w) + vec3(coreOf(p.w)), depth);
     vAlpha = uAlpha * mix(0.4, 1.0, depth);
     vSize = uSize * mix(0.8, 1.15, depth);
     gl_PointSize = vSize + 2.0;                    // room for the AA edge
@@ -1323,6 +1343,10 @@ void main() {
     vec3 c = m > 1e-5 ? hdr * ((1.0 - exp(-m * uExposure)) / m) : vec3(0.0);
     // Dither away banding in the faint tails.
     float n = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    // A soft vignette draws the eye to the centre, as a lens would.
+    vec2 res = vec2(textureSize(uScene, 0));
+    vec2 q = (gl_FragCoord.xy - 0.5 * res) / max(res.x, res.y);
+    c *= 1.0 - 0.32 * smoothstep(0.25, 0.75, length(q));
     c += (n - 0.5) * (0.6 / 255.0);
     outColor = vec4(c * uFade, 1.0);
 }`;
@@ -1635,7 +1659,7 @@ function frame(now) {
     updateTour(dt);
 
     if (!state.paused && state.speed > 0 && count > 0 && dt > 0 && !state.pendingType) {
-        if (state.dyeMix > 0) updateFireflies(dt * Math.sqrt(state.speed));
+        if (state.dyeMix > 0) updateGlow(dt);
         if (state.spot > 0) updateSpot(dt);
         advance(dt * state.speed * ATTRACTORS[state.type].timeScale);
         dirty = true;
@@ -2649,7 +2673,6 @@ function butterfly(clientX, clientY) {
     // filament at once and is torn over the whole attractor within seconds.
     const eps = r * 0.03;
     const A = ATTRACTORS[state.type], p = state.params[state.type];
-    const phase = Math.random() * 2 * Math.PI;
     for (let k = 0; k < n; k++) {
         const i = Math.min(count - 1, Math.floor((k + Math.random() * 0.999) * count / n));
         // Uniform in a ball, not a cube.
@@ -2662,7 +2685,6 @@ function butterfly(clientX, clientY) {
         A.deriv(px[i], py[i], pz[i], p, k1);
         pSpeed[i] = Math.hypot(k1[0], k1[1], k1[2]);
         pDye[i] = 1;                  // the brightest colour
-        pPhase[i] = phase;            // and flashing in unison, at first
         resetHistory(i);
     }
     state.spot = 1;
