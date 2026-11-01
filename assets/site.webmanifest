@@ -1,0 +1,13 @@
+{
+  "name": "AttracTool",
+  "short_name": "AttracTool",
+  "icons": [
+    { "src": "icons/icon-192.png", "type": "image/png", "sizes": "192x192" },
+    { "src": "icons/icon-512.png", "type": "image/png", "sizes": "512x512" }
+  ],
+  "start_url": "../",
+  "scope": "../",
+  "display": "standalone",
+  "background_color": "#05060a",
+  "theme_color": "#05060a"
+}

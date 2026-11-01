@@ -1,42 +1,32 @@
-# ATTRACTOOL
+# AttracTool
 
-**ATTRACTOOL** is a dynamic visualization tool for exploring **chaotic attractors** with customizable parameters, interactive controls, and more. Play around with it at https://simonsmida.github.io/vin-attractool/.
+Simulate chaotic attractors in 3D and explore how their parameters shape the dynamics.
 
-![ATTRACTOOL Preview](./attractool.png)
+**[Open AttracTool →](https://simonsmida.github.io/vin-attractool/)**
 
----
+![AttracTool showing the Lorenz attractor](docs/preview.jpg)
 
-## Features
-- **Explore Chaotic Attractors**: 
-  - Lorenz
-  - Rössler
-  - Halvorsen
-  - Aizawa
-- **Color Schemes**: 
-  - 🌈 Rainbow
-  - 🔥 Fire
-  - ❄️ Cool
-  - ⚡ Neon
-  - 🧁 Pastel
-  - ⚫ Grayscale
-  - 💜 Cyberpunk
-- **Customizable Parameters**: Adjust equations and visualization settings in real-time.
-- **Interactive Controls**: Rotate, zoom, modify simulations with keyboard, mouse, or touch.
+- Eleven classic systems, from Lorenz and Rössler to Aizawa and the three-scroll attractor
+- **Discover** searches random quadratic flows for new chaotic attractors
+- Tap the attractor to release a stream of nearby starts and watch the butterfly effect
+- Particles brighten where the flow stretches fastest (local Lyapunov exponent)
 
----
+Drag to rotate, scroll or pinch to zoom, right-drag or three fingers to pan, double-click to reset.
 
-## Usage
-- Use the sidebar to select attractors, adjust parameters, and switch themes.
-- Interact with the canvas:
-  - **Drag**: Rotate view
-  - **Scroll/Pinch**: Zoom
-  - **Keyboard**: Adjust parameters (`↑ ↓ → ←`), pause (`Space`), reset (`Enter`).
-- Access equations and help via top-bar buttons.
+## Run locally
 
-## Acknowledgements
-This project uses:
-- [MathJax](https://www.mathjax.org/) for equations rendering.
-- [Font Awesome](https://fontawesome.com/) for icons.
+A static page with no build step or dependencies:
 
-## License
-This project is licensed under the [MIT License](LICENSE).
+```sh
+python3 -m http.server
+```
+
+Then open http://localhost:8000.
+
+```
+index.html      page and controls
+assets/         script.js (simulation and WebGL renderer), style.css, icons
+docs/           README images
+```
+
+[MIT License](LICENSE)
