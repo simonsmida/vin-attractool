@@ -1221,7 +1221,7 @@ float colorOf(float w) {
 float glowOf(float w) {
     float m = markOf(w);
     float f = flashOf(w);
-    return mix(1.0, 0.45 + 1.6 * f, uAlive * (1.0 - m)) * (1.0 - 0.7 * uSpot * (1.0 - m)) * (1.0 + 2.2 * m);
+    return mix(1.0, 0.72 + 1.15 * f, uAlive * (1.0 - m)) * (1.0 - 0.55 * uSpot * (1.0 - m)) * (1.0 + 0.9 * m);
 }
 uniform vec3 uPalette[${PALETTE_SIZE}];
 
@@ -1307,12 +1307,13 @@ void main() {
     vColor = colorAt(mix(colorOf(a.w), colorOf(b.w), t) * (1.0 - uTailCool * u))
            * mix(glowOf(a.w), glowOf(b.w), t);
     vColor += vec3(mix(coreOf(a.w), coreOf(b.w), t) * (1.0 - u));
-    // Stream particles keep short, soft tails so they read as separate sparks.
+    // Stream particles: short comet tails, so the stream reads as sparks
+    // in flight rather than one bright band.
     float mk = markOf(a.w);
-    vColor *= mix(1.0, 0.3, mk);
+    vColor *= mix(1.0, 0.75, mk);
     vColor = depthTint(vColor, depth);
     // Bright head, long soft decay that reaches exactly zero at the tail.
-    float fade = exp(-mix(4.2, 45.0, mk) * u) * (1.0 - u * u);
+    float fade = exp(-mix(4.2, 16.0, mk) * u) * (1.0 - u * u);
     // Thin lines cover less than a pixel; keep their energy constant.
     float cover = min(1.0, w);
     vAlpha = uAlpha * fade * cover * mix(0.4, 1.0, depth) * (seg > 1e-7 * uRadius ? 1.0 : 0.0);
@@ -1346,7 +1347,7 @@ void main() {
     gl_Position = vec4(s / uHalf, 0.0, 1.0);
     vColor = depthTint(colorAt(colorOf(p.w)) * glowOf(p.w) + vec3(coreOf(p.w)), depth);
     vAlpha = uAlpha * mix(0.4, 1.0, depth);
-    vSize = uSize * mix(0.8, 1.15, depth) * (1.0 + 0.7 * markOf(p.w));
+    vSize = uSize * mix(0.8, 1.15, depth) * (1.0 + 0.12 * markOf(p.w));
     gl_PointSize = vSize + 2.0;                    // room for the AA edge
 }`;
 
@@ -1705,6 +1706,7 @@ function frame(now) {
     if (!state.paused && state.speed > 0 && count > 0 && dt > 0 && !state.pendingType) {
         if (state.dyeMix > 0) updateGlow(dt);
         if (state.spot > 0) updateSpot(dt);
+        updateAutoColor(dt);
         const ts = ATTRACTORS[state.type].timeScale;
         if (state.spot > 0) advanceStream(dt * ts);
         advance(dt * state.speed * ts);
@@ -2129,8 +2131,6 @@ function onKeyDown(e) {
         resetView();
     } else if (e.key === "t" || e.key === "T") {
         toggleTrails();
-    } else if (e.key === "c" || e.key === "C") {
-        toggleColorBy();
     } else if (e.key === "s" || e.key === "S") {
         toggleSpin();
     } else if (e.key === "l" || e.key === "L") {
@@ -2620,8 +2620,70 @@ function drawThumb(type) {
 
 // ---- Palette swatches -----------------------------------------------------
 
+/* Auto colour (the default): the palette drifts by itself, holding each one
+   for a while and then melting into the next through OKLab, so the swarm is
+   never the same colour for long. Picking a swatch fixes that palette. */
+const AUTO_HOLD = 16, AUTO_FADE = 7;  // seconds
+const autoColor = { on: true, clock: 0, from: "inferno", to: "inferno" };
+const labCache = {};
+function paletteLab(name) {
+    return labCache[name] ||= buildPalette(name).map(rgbToOklab);
+}
+function nextScheme(name) {
+    const names = Object.keys(SCHEMES);
+    return names[(names.indexOf(name) + 1) % names.length];
+}
+function startAutoColor(name) {
+    autoColor.from = name;
+    autoColor.to = nextScheme(name);
+    autoColor.clock = 0;
+}
+function updateAutoColor(dt) {
+    if (!autoColor.on) return;
+    autoColor.clock += dt;
+    const c = autoColor.clock - AUTO_HOLD;
+    if (c <= 0) return;
+    const t = Math.min(1, c / AUTO_FADE), e = t * t * (3 - 2 * t);
+    // Blend in OKLCh along the shorter way round the hue circle: straight
+    // OKLab blends of opposite hues pass through grey.
+    const A = paletteLab(autoColor.from), B = paletteLab(autoColor.to);
+    state.palette = A.map((a, i) => {
+        const b = B[i];
+        const ca = Math.hypot(a[1], a[2]), cb = Math.hypot(b[1], b[2]);
+        const ha = Math.atan2(a[2], a[1]), hb = Math.atan2(b[2], b[1]);
+        let dh = hb - ha;
+        dh -= 2 * Math.PI * Math.round(dh / (2 * Math.PI));
+        const L = a[0] + (b[0] - a[0]) * e, C = ca + (cb - ca) * e, H = ha + dh * e;
+        return oklabToRgb([L, C * Math.cos(H), C * Math.sin(H)]);
+    });
+    // The interface accent follows once the new palette dominates.
+    if (e > 0.5 && state.scheme !== autoColor.to) { state.scheme = autoColor.to; applyAccent(); }
+    dirty = true;
+    if (t >= 1) startAutoColor(autoColor.to);
+}
+
+function markSwatches() {
+    document.querySelectorAll(".swatch").forEach(b => b.setAttribute("aria-checked",
+        String(b.dataset.scheme === "auto" ? autoColor.on : !autoColor.on && b.dataset.scheme === state.scheme)));
+}
+
 function buildPaletteSwatches() {
     const row = $("paletteRow");
+    const auto = document.createElement("button");
+    auto.type = "button";
+    auto.className = "swatch swatch-auto";
+    auto.setAttribute("role", "radio");
+    auto.setAttribute("aria-label", "Auto: colours drift by themselves");
+    auto.title = "Auto: colours drift by themselves";
+    auto.dataset.scheme = "auto";
+    auto.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path class="fill" d="M12 3.5c.5 3.9 1.8 5.4 5.6 6-3.8.6-5.1 2.1-5.6 6-.5-3.9-1.8-5.4-5.6-6 3.8-.6 5.1-2.1 5.6-6Z" /></svg>';
+    auto.addEventListener("click", () => {
+        state.userPalette = false;
+        autoColor.on = true;
+        startAutoColor(state.scheme);
+        markSwatches();
+    });
+    row.appendChild(auto);
     for (const name of Object.keys(SCHEMES)) {
         const pal = buildPalette(name);
         const stops = [0, 8, 16, 24, 31].map(i => `rgb(${pal[i].join(",")})`).join(", ");
@@ -2634,7 +2696,7 @@ function buildPaletteSwatches() {
         b.title = b.getAttribute("aria-label");
         b.style.background = `linear-gradient(90deg, ${stops})`;
         b.dataset.scheme = name;
-        b.addEventListener("click", () => { state.userPalette = true; setScheme(name); });
+        b.addEventListener("click", () => { state.userPalette = true; autoColor.on = false; setScheme(name); });
         row.appendChild(b);
     }
 }
@@ -2642,7 +2704,8 @@ function buildPaletteSwatches() {
 function setScheme(name) {
     state.scheme = name;
     state.palette = buildPalette(name);
-    document.querySelectorAll(".swatch").forEach(b => b.setAttribute("aria-checked", String(b.dataset.scheme === name)));
+    if (autoColor.on) startAutoColor(name);
+    markSwatches();
     applyAccent();
     dirty = true;
 }
@@ -3129,11 +3192,90 @@ function togglePanel() {
     updateLayout();
 }
 
-function toggleSheet() {
+/* Phone bottom sheet: open and close with a slide, by tap or by swipe. */
+const SHEET_EASE = "transform 0.32s cubic-bezier(0.22, 1, 0.36, 1)";
+function setSheet(open, fromY = null) {
     const panel = $("panel");
-    const closed = panel.classList.toggle("sheet-closed");
-    $("sheetToggle").setAttribute("aria-expanded", String(!closed));
+    if (open === !panel.classList.contains("sheet-closed") && fromY === null) return;
+    const head = panel.querySelector(".panel-head").getBoundingClientRect().height;
+    if (open) {
+        // Open at once, then slide up from where the sheet stands now.
+        const closedOffset = fromY ?? 0;
+        panel.classList.remove("sheet-closed");
+        const travel = panel.getBoundingClientRect().height - head;
+        panel.style.transition = "none";
+        panel.style.transform = `translateY(${Math.max(0, travel + Math.min(0, closedOffset))}px)`;
+        panel.getBoundingClientRect();
+        panel.style.transition = SHEET_EASE;
+        panel.style.transform = "";
+        setTimeout(() => { if (!panel.style.transform) panel.style.transition = ""; }, 400);
+    } else {
+        // Slide down to the header, then fold the body away.
+        const travel = panel.getBoundingClientRect().height - head;
+        panel.style.transition = SHEET_EASE;
+        panel.style.transform = `translateY(${travel}px)`;
+        const done = () => {
+            panel.removeEventListener("transitionend", done);
+            clearTimeout(timer);
+            panel.style.transition = "none";
+            panel.classList.add("sheet-closed");
+            panel.style.transform = "";
+            requestAnimationFrame(() => { panel.style.transition = ""; });
+            updateLayout();
+        };
+        const timer = setTimeout(done, 400);
+        panel.addEventListener("transitionend", done);
+    }
+    $("sheetToggle").setAttribute("aria-expanded", String(open));
     updateLayout();
+}
+
+function toggleSheet() {
+    setSheet($("panel").classList.contains("sheet-closed"));
+}
+
+/* Swipe the sheet by its header: it follows the finger, and a short or
+   quick swipe down closes it, up opens it. A tap still toggles. */
+function initSheetSwipe() {
+    const panel = $("panel"), head = panel.querySelector(".panel-head");
+    let start = null, swiped = false;
+    head.addEventListener("pointerdown", e => {
+        if (!isPhone() || e.button > 0 || e.target.closest("a, .icon-btn")) return;
+        start = { y: e.clientY, t: e.timeStamp, id: e.pointerId, dy: 0, v: 0, last: e.clientY, lt: e.timeStamp };
+        swiped = false;
+    });
+    head.addEventListener("pointermove", e => {
+        if (!start || e.pointerId !== start.id) return;
+        const dy = e.clientY - start.y;
+        if (!swiped && Math.abs(dy) < 8) return;
+        if (!swiped) { swiped = true; head.setPointerCapture(e.pointerId); }
+        const dt = Math.max(1, e.timeStamp - start.lt);
+        start.v = 0.7 * start.v + 0.3 * (e.clientY - start.last) / dt;
+        start.last = e.clientY; start.lt = e.timeStamp; start.dy = dy;
+        const open = !panel.classList.contains("sheet-closed");
+        // Open: follow the finger down. Closed: a little give upward.
+        const y = open ? Math.max(0, dy) * 1 + Math.min(0, dy) * 0.15 : Math.min(0, dy) * 0.35;
+        panel.style.transition = "none";
+        panel.style.transform = `translateY(${y}px)`;
+    });
+    const end = e => {
+        if (!start || e.pointerId !== start.id) return;
+        const { dy, v } = start;
+        start = null;
+        if (!swiped) return;
+        const open = !panel.classList.contains("sheet-closed");
+        if (open && (dy > 70 || v > 0.45)) setSheet(false);
+        else if (!open && (dy < -24 || v < -0.35)) setSheet(true, Math.min(0, dy) * 0.35);
+        else {
+            panel.style.transition = SHEET_EASE;
+            panel.style.transform = "";
+            setTimeout(() => { if (!panel.style.transform) panel.style.transition = ""; }, 400);
+        }
+    };
+    head.addEventListener("pointerup", end);
+    head.addEventListener("pointercancel", end);
+    // The click that ends a swipe must not toggle the sheet again.
+    head.addEventListener("click", e => { if (swiped) { e.stopPropagation(); e.preventDefault(); swiped = false; } }, true);
 }
 
 /* Keep the attractor centred in, and fitted to, the part of the screen the
@@ -3157,7 +3299,8 @@ function updateLayout() {
         document.body.classList.toggle("sheet-open", open);
         if (!open) document.body.classList.remove("dock-open");
         top = open ? $("dockMore").getBoundingClientRect().top + 4 : dock ? dock.getBoundingClientRect().bottom + m : 0;
-        bottom = panel.getBoundingClientRect().top - m;
+        // offsetTop ignores the slide transform: frame for where the sheet settles.
+        bottom = panel.offsetTop - m;
     } else {
         document.body.classList.remove("sheet-open", "dock-open");
         if (!panel.classList.contains("collapsed")) {
@@ -3222,6 +3365,7 @@ function initUI() {
     $("collapseBtn").addEventListener("click", togglePanel);
     $("showPanelBtn").addEventListener("click", togglePanel);
     $("sheetToggle").addEventListener("click", () => { if (isPhone()) toggleSheet(); });
+    initSheetSwipe();
 
     $("particleCount").addEventListener("input", e => {
         const n = countFromSlider(parseFloat(e.target.value));

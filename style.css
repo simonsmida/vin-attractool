@@ -605,9 +605,42 @@ input[type="range"]:focus-visible::-moz-range-thumb {
 
 .palette-row {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 7px;
   padding-top: 4px;
+}
+
+/* Auto: a slowly turning wheel of every palette. */
+.swatch-auto {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #0b0c12;
+  color: #fff;
+}
+
+.swatch-auto::before {
+  content: "";
+  position: absolute;
+  inset: -60%;
+  background: conic-gradient(#f98e09, #ff4fb8, #8a10d0, #2f4fff, #00e5ff, #4ac16d, #fbc228, #f98e09);
+  animation: auto-spin 8s linear infinite;
+}
+
+.swatch-auto svg {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.6));
+}
+
+@keyframes auto-spin {
+  to { transform: rotate(1turn); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .swatch-auto::before { animation: none; }
 }
 
 .swatch {
@@ -916,6 +949,7 @@ input[type="range"]:focus-visible::-moz-range-thumb {
 
   .panel-head {
     padding: 10px 10px 10px 16px;
+    touch-action: none;               /* the header swipes the sheet */
   }
 
   .brand {
