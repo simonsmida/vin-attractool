@@ -716,6 +716,8 @@ const tvx = new Float32Array(MAX_PARTICLES), tvy = new Float32Array(MAX_PARTICLE
 const pStretch = new Float32Array(MAX_PARTICLES);   // smoothed local stretching rate (1 / sim time)
 const pFlash = new Uint8Array(MAX_PARTICLES);       // flare level 0..255 for the shaders
 const pMark = new Float32Array(MAX_PARTICLES);      // butterfly cluster highlight, 1 → 0
+// The butterfly source: releases a stream of marked particles (see butterfly()).
+const emitter = { x: 0, y: 0, z: 0, left: 0, rate: 0, acc: 0, next: 0, stride: 1, nozzle: 0, glow: 0 };
 const k5 = new Float64Array(3);
 function initTangent(i) {
     let a, b, c, l;
@@ -864,6 +866,8 @@ function spawn(i, initial = false) {
 function spawnAll() {
     updateDyeField();
     glowLo = glowHi = 0;              // re-learn the flare range at once
+    emitter.left = 0;                 // a new scene stops any butterfly stream
+    emitter.glow = 0;
     for (let i = 0; i < count; i++) spawn(i, true);
     dirty = true;
 }
@@ -1267,9 +1271,12 @@ void main() {
     vColor = colorAt(mix(colorOf(a.w), colorOf(b.w), t) * (1.0 - uTailCool * u))
            * mix(glowOf(a.w), glowOf(b.w), t);
     vColor += vec3(mix(coreOf(a.w), coreOf(b.w), t) * (1.0 - u));
+    // Stream particles keep short, soft tails so they read as separate sparks.
+    float mk = markOf(a.w);
+    vColor *= mix(1.0, 0.3, mk);
     vColor = depthTint(vColor, depth);
     // Bright head, long soft decay that reaches exactly zero at the tail.
-    float fade = exp(-4.2 * u) * (1.0 - u * u);
+    float fade = exp(-mix(4.2, 45.0, mk) * u) * (1.0 - u * u);
     // Thin lines cover less than a pixel; keep their energy constant.
     float cover = min(1.0, w);
     vAlpha = uAlpha * fade * cover * mix(0.4, 1.0, depth) * (seg > 1e-7 * uRadius ? 1.0 : 0.0);
@@ -1303,7 +1310,7 @@ void main() {
     gl_Position = vec4(s / uHalf, 0.0, 1.0);
     vColor = depthTint(colorAt(colorOf(p.w)) * glowOf(p.w) + vec3(coreOf(p.w)), depth);
     vAlpha = uAlpha * mix(0.4, 1.0, depth);
-    vSize = uSize * mix(0.8, 1.15, depth);
+    vSize = uSize * mix(0.8, 1.15, depth) * (1.0 + 0.7 * markOf(p.w));
     gl_PointSize = vSize + 2.0;                    // room for the AA edge
 }`;
 
@@ -1662,12 +1669,15 @@ function frame(now) {
     if (!state.paused && state.speed > 0 && count > 0 && dt > 0 && !state.pendingType) {
         if (state.dyeMix > 0) updateGlow(dt);
         if (state.spot > 0) updateSpot(dt);
-        advance(dt * state.speed * ATTRACTORS[state.type].timeScale);
+        const ts = ATTRACTORS[state.type].timeScale;
+        if (state.spot > 0) advanceStream(dt * ts);
+        advance(dt * state.speed * ts);
         dirty = true;
     }
 
     if (moving || dirty) {
         render();
+        updateSource();
         dirty = false;
 
     }
@@ -2645,66 +2655,149 @@ function onTap(x, y) {
     tapTimer = setTimeout(() => { tapTimer = 0; butterfly(x, y); }, 260);
 }
 
-/* Drop a tight ball of particles, a few % of the attractor across, on the attractor point nearest the tap. They travel as one for a
-   moment, then chaos tears them apart until they are spread over the whole
-   attractor: sensitive dependence on initial conditions, made visible. */
+/* Project a world point to CSS pixels (and its view depth). */
+function toScreen(X, Y, Z, M = viewMatrix()) {
+    const [ccx, ccy, ccz] = cam.center;
+    const r = cam.radius, camDist = 4.5 * r, focal = frameScale() * camDist;
+    const x = X - ccx, y = Y - ccy, z = Z - ccz;
+    const vx = M[0] * x + M[1] * y + M[2] * z;
+    const vy = M[3] * x + M[4] * y + M[5] * z;
+    const vz = M[6] * x + M[7] * y + M[8] * z;
+    const w = focal / Math.max(camDist - vz, r * 0.05);
+    return [(width / 2 + screenOffX() + vx * w) / dpr, (height / 2 - screenOffY() - vy * w) / dpr, vz];
+}
+
+/* The butterfly effect as a fountain: the tapped point on the attractor
+   becomes a source that releases a stream of particles, each starting a
+   hair away from the last. They leave as one bright stream, follow the
+   same path for a while, then chaos fans the stream out and folds it over
+   the whole attractor. Particles are released one by one in simulation
+   time, so they are spaced along the flow instead of piled into a blob. */
+
 function butterfly(clientX, clientY) {
     if (count === 0 || ref.n === 0 || state.pendingType) return;
     const M = viewMatrix();
-    const [ccx, ccy, ccz] = cam.center;
-    const r = cam.radius, camDist = 4.5 * r, focal = frameScale() * camDist;
-    const ox = width / 2 + screenOffX(), oy = height / 2 - screenOffY();
-    const tx = clientX * dpr, ty = clientY * dpr;
+    const r = cam.radius;
     let best = -1, bestD = Infinity;
     for (let j = 0; j < ref.n; j++) {
-        const x = ref.pts[3 * j] - ccx, y = ref.pts[3 * j + 1] - ccy, z = ref.pts[3 * j + 2] - ccz;
-        const vx = M[0] * x + M[1] * y + M[2] * z;
-        const vy = M[3] * x + M[4] * y + M[5] * z;
-        const vz = M[6] * x + M[7] * y + M[8] * z;
-        const w = focal / Math.max(camDist - vz, r * 0.05);
-        const dx = ox + vx * w - tx, dy = oy - vy * w - ty;
+        const [sx, sy, vz] = toScreen(ref.pts[3 * j], ref.pts[3 * j + 1], ref.pts[3 * j + 2], M);
+        const dx = sx - clientX, dy = sy - clientY;
         // Prefer the nearer of overlapping strands.
-        const d = dx * dx + dy * dy - vz / r * 40 * dpr * dpr;
+        const d = dx * dx + dy * dy - vz / r * 40;
         if (d < bestD) { bestD = d; best = j; }
     }
     if (best < 0) return;
-    const X = ref.pts[3 * best], Y = ref.pts[3 * best + 1], Z = ref.pts[3 * best + 2];
-    const n = Math.max(150, Math.min(700, Math.round(count * 0.4)));
-    // A small ball, a few % of the attractor across: it stretches into a
-    // filament at once and is torn over the whole attractor within seconds.
-    const eps = r * 0.03;
-    const A = ATTRACTORS[state.type], p = state.params[state.type];
-    for (let k = 0; k < n; k++) {
-        const i = Math.min(count - 1, Math.floor((k + Math.random() * 0.999) * count / n));
-        // Uniform in a ball, not a cube.
-        let ux, uy, uz;
-        do { ux = 2 * Math.random() - 1; uy = 2 * Math.random() - 1; uz = 2 * Math.random() - 1; } while (ux * ux + uy * uy + uz * uz > 1);
-        px[i] = X + ux * eps;
-        py[i] = Y + uy * eps;
-        pz[i] = Z + uz * eps;
-        pMark[i] = 1;
-        A.deriv(px[i], py[i], pz[i], p, k1);
-        pSpeed[i] = Math.hypot(k1[0], k1[1], k1[2]);
-        pDye[i] = 1;                  // the brightest colour
-        resetHistory(i);
-    }
-    state.spot = 1;
+    const A = ATTRACTORS[state.type];
+    // Few enough to stay separate sparks; each one a spark-width apart.
+    const n = Math.min(count, 140);
+    emitter.x = ref.pts[3 * best];
+    emitter.y = ref.pts[3 * best + 1];
+    emitter.z = ref.pts[3 * best + 2];
+    emitter.left = n;
+    // One spark per ~3% of the attractor's size of travel at a typical
+    // speed, so the stream is a string of beads, never a solid line.
+    const vTyp = Math.exp(0.5 * (ref.speedLo + ref.speedHi));
+    emitter.rate = vTyp / (0.03 * ref.radius);
+    emitter.acc = 0;
+    // Reuse particles spread over the whole cloud, so no region empties.
+    emitter.stride = Math.max(1, Math.floor(count / n));
+    emitter.next = (Math.random() * emitter.stride) | 0;
+    emitter.nozzle = ref.radius * 0.03;
+    emitter.glow = 1;
+    state.spot = Math.max(state.spot, 0.001);
     state.spotAge = 0;
     dirty = true;
     ripple(clientX, clientY);
     if (!butterflyHinted) {
         butterflyHinted = true;
-        showToast(`Butterfly effect: ${n} nearly identical starts, torn apart by chaos`);
+        showToast("Butterfly effect: a stream of almost identical starts, torn apart by chaos");
     }
 }
 
-/* The cluster stays lit for a while, then hands the stage back. */
-const SPOT_HOLD = 18, SPOT_FADE = 8; // seconds: long enough to watch it spread
+/* The stream keeps a lively pace even when the attractor is slowed right
+   down: chaos needs a few time units to tear it apart, which would take
+   minutes at 0.25x. The spotlit sparks run at least at STREAM_PACE while the
+   dimmed rest keeps the chosen speed; speed 0 still freezes everything. */
+const STREAM_PACE = 0.8;
+function advanceStream(dtTs) {
+    const speed = state.speed;
+    const pace = Math.max(speed, STREAM_PACE);
+    if (emitter.left > 0) emitStream(dtTs * pace);
+    const extra = dtTs * (pace - speed);
+    if (extra <= 0) return;
+    const A = ATTRACTORS[state.type], p = state.params[state.type];
+    for (let i = 0; i < count; i++) {
+        if (pMark[i] <= 0) continue;
+        stepParticle(i, extra, A, p);
+        A.deriv(px[i], py[i], pz[i], p, k1);
+        pSpeed[i] = Math.hypot(k1[0], k1[1], k1[2]);
+    }
+}
+
+/* Release the particles due during the next stretch T of stream time. */
+function emitStream(T) {
+    const A = ATTRACTORS[state.type], p = state.params[state.type];
+    emitter.acc += T * emitter.rate;
+    while (emitter.acc >= 1 && emitter.left > 0) {
+        emitter.acc -= 1;
+        emitter.left--;
+        const i = emitter.next % count;
+        emitter.next += emitter.stride;
+        // A soft nozzle: Gaussian-ish offsets, most starts very close.
+        let ux, uy, uz;
+        do { ux = 2 * Math.random() - 1; uy = 2 * Math.random() - 1; uz = 2 * Math.random() - 1; } while (ux * ux + uy * uy + uz * uz > 1);
+        const k = emitter.nozzle * Math.random();
+        px[i] = emitter.x + ux * k;
+        py[i] = emitter.y + uy * k;
+        pz[i] = emitter.z + uz * k;
+        // Released at a random moment within this chunk, not all at once.
+        stepParticle(i, Math.random() * T, A, p);
+        A.deriv(px[i], py[i], pz[i], p, k1);
+        pSpeed[i] = Math.hypot(k1[0], k1[1], k1[2]);
+        pDye[i] = 1;
+        pMark[i] = 1;
+        initTangent(i);
+        resetHistory(i);
+    }
+}
+
+function stepParticle(i, T, A, p) {
+    if (T <= 0) return;
+    const n = Math.max(1, Math.ceil(T / A.h)), h = T / n, h2 = h / 2, h6 = h / 6, f = A.deriv;
+    let x = px[i], y = py[i], z = pz[i];
+    for (let s = 0; s < n; s++) {
+        f(x, y, z, p, k1);
+        f(x + h2 * k1[0], y + h2 * k1[1], z + h2 * k1[2], p, k2);
+        f(x + h2 * k2[0], y + h2 * k2[1], z + h2 * k2[2], p, k3);
+        f(x + h * k3[0], y + h * k3[1], z + h * k3[2], p, k4);
+        x += h6 * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]);
+        y += h6 * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]);
+        z += h6 * (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2]);
+    }
+    px[i] = x; py[i] = y; pz[i] = z;
+}
+
+/* The stream stays lit for a while, then hands the stage back. The
+   spotlight eases in so the rest of the attractor dims gently. */
+const SPOT_HOLD = 20, SPOT_FADE = 8; // seconds: long enough to watch it spread
 function updateSpot(dt) {
     state.spotAge += dt;
-    const level = state.spotAge < SPOT_HOLD ? 1 : Math.max(0, 1 - (state.spotAge - SPOT_HOLD) / SPOT_FADE);
+    const level = state.spotAge < SPOT_HOLD ? Math.min(1, state.spotAge / 0.6) : Math.max(0, 1 - (state.spotAge - SPOT_HOLD) / SPOT_FADE);
     state.spot = level;
-    for (let i = 0; i < count; i++) if (pMark[i] > 0) pMark[i] = level;
+    const mark = state.spotAge < SPOT_HOLD ? 1 : level;
+    for (let i = 0; i < count; i++) if (pMark[i] > 0) pMark[i] = mark;
+    if (emitter.left <= 0) emitter.glow = Math.max(0, emitter.glow - dt / 1.2);
+}
+
+/* A soft glowing source pinned to the tapped point while it releases. */
+function updateSource() {
+    const el = $("source");
+    if (!el) return;
+    if (emitter.glow <= 0 || state.spot <= 0) { if (!el.hidden) el.hidden = true; return; }
+    const [sx, sy] = toScreen(emitter.x, emitter.y, emitter.z);
+    el.hidden = false;
+    el.style.transform = `translate(${sx}px, ${sy}px)`;
+    el.style.opacity = String(emitter.glow);
 }
 
 function ripple(x, y) {
