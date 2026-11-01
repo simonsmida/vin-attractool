@@ -2524,7 +2524,7 @@ function revealCard(c) {
     }
 }
 
-/* Desktop: the list shows up to two full rows and a glimpse of the third,
+/* Desktop: the list shows up to three full rows and a glimpse of the fourth,
    which fades out; fades appear at whichever edge has more cards beyond it. */
 function sizeCardList() {
     const grid = $("attractorGrid"), card = grid.querySelector(".att-card");
@@ -2534,7 +2534,7 @@ function sizeCardList() {
         grid.style.minHeight = "";
     } else {
         const rowH = card.getBoundingClientRect().height, gap = 8;
-        grid.style.maxHeight = `${Math.round(2 * rowH + gap + 0.42 * rowH + 6)}px`;
+        grid.style.maxHeight = `${Math.round(3 * rowH + 2 * gap + 0.42 * rowH + 6)}px`;
         // On short screens the list gives up height first, so the rest of
         // the panel fits without scrolling; it never drops below about a row.
         grid.style.minHeight = `${Math.round(1.35 * rowH + 6)}px`;
