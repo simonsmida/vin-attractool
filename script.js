@@ -553,6 +553,12 @@ const MAX_PARTICLES = 20000;
 const HISTORY_BUDGET = window.matchMedia("(pointer: coarse)").matches ? 240000 : 480000;
 const COUNT_MIN = 200;
 const DEFAULT_SPEED = 0.5;         // slow enough to follow individual particles
+/* The speed slider is logarithmic from 0.05× to 2×: most of its travel is
+   for slowing down, where differences are easy to see. */
+const SPEED_MIN = 0.05, SPEED_MAX = 2;
+const speedFromSlider = v => SPEED_MIN * (SPEED_MAX / SPEED_MIN) ** (v / 100);
+const sliderFromSpeed = s => 100 * Math.log(s / SPEED_MIN) / Math.log(SPEED_MAX / SPEED_MIN);
+const formatSpeed = s => String(+s.toFixed(2)) + "×";
 
 /* The particle slider is logarithmic: equal moves multiply the count by the
    same factor (200 → 2,000 → 20,000), which matches how density is seen. */
@@ -906,21 +912,22 @@ function applyReference(res) {
     }
 
     const { pts, speeds } = res;
-    // Pivot on the median point: it sits in the bulk of the attractor and
-    // ignores rare excursions such as the Rössler spike.
+    // Pivot on the middle of the attractor's extent (robust to the rarest
+    // 0.1 % on each side), so lopsided shapes such as the Rössler spike are
+    // framed whole and centred, whatever the rotation.
     const center = [0, 0, 0];
     for (let d = 0; d < 3; d++) {
         const v = new Float64Array(REF_SAMPLES);
         for (let j = 0; j < REF_SAMPLES; j++) v[j] = pts[3 * j + d];
         v.sort();
-        center[d] = v[REF_SAMPLES >> 1];
+        center[d] = 0.5 * (v[Math.floor(REF_SAMPLES * 0.001)] + v[Math.floor(REF_SAMPLES * 0.999)]);
     }
     const dist = new Float64Array(REF_SAMPLES);
     for (let j = 0; j < REF_SAMPLES; j++) {
         dist[j] = Math.hypot(pts[3 * j] - center[0], pts[3 * j + 1] - center[1], pts[3 * j + 2] - center[2]);
     }
     dist.sort();
-    const radius = dist[Math.floor(REF_SAMPLES * 0.999)];
+    const radius = dist[Math.floor(REF_SAMPLES * 0.9995)];
     const s = speeds.slice().sort();
 
     ref.pts = pts;
@@ -2162,8 +2169,8 @@ function applyRecommended(type) {
     const n = recommendedCount(type);
     state.speed = DEFAULT_SPEED;
     state.count = n;
-    setRange("speed", DEFAULT_SPEED);
-    $("speedVal").textContent = DEFAULT_SPEED.toFixed(1) + "×";
+    setRange("speed", sliderFromSpeed(DEFAULT_SPEED));
+    $("speedVal").textContent = formatSpeed(DEFAULT_SPEED);
     setRange("particleCount", sliderFromCount(n));
     $("particleCountVal").textContent = n.toLocaleString("en-US");
 }
@@ -2565,6 +2572,19 @@ function applyAccent() {
     root.setProperty("--accent-soft", `rgba(${r}, ${g}, ${b}, 0.18)`);
 }
 
+// ---- Folded dock (phones, sheet open) ----------------------------------------
+
+let dockTimer = 0;
+function setDockOpen(open, delay = 0) {
+    clearTimeout(dockTimer);
+    const apply = () => {
+        document.body.classList.toggle("dock-open", open);
+        $("dockMore").setAttribute("aria-expanded", String(open));
+        if (open) dockTimer = setTimeout(() => setDockOpen(false), 5000);
+    };
+    if (delay) dockTimer = setTimeout(apply, delay); else apply();
+}
+
 // ---- Butterfly effect -------------------------------------------------------
 
 let tapTimer = 0;
@@ -2944,14 +2964,21 @@ function updateLayout() {
     let left = 0, top = 0, right = W, bottom = H, shift = 0;
     if (document.body.classList.contains("cinema")) {
         // Full screen: the controls are hidden; keep a little air.
+        document.body.classList.remove("sheet-open", "dock-open");
         top = 0.05 * H; bottom = 0.95 * H;
     } else if (isPhone()) {
         panel.classList.remove("collapsed");
         panel.inert = false;
         $("showPanelBtn").hidden = true;
-        top = dock ? dock.getBoundingClientRect().bottom + m : 0;
+        // With the sheet open the dock folds into a corner button, so the
+        // attractor gets the whole height above the sheet.
+        const open = !panel.classList.contains("sheet-closed");
+        document.body.classList.toggle("sheet-open", open);
+        if (!open) document.body.classList.remove("dock-open");
+        top = open ? $("dockMore").getBoundingClientRect().top + 4 : dock ? dock.getBoundingClientRect().bottom + m : 0;
         bottom = panel.getBoundingClientRect().top - m;
     } else {
+        document.body.classList.remove("sheet-open", "dock-open");
         if (!panel.classList.contains("collapsed")) {
             left = panel.getBoundingClientRect().right;
             shift = left / 2;
@@ -2989,6 +3016,10 @@ function initUI() {
     document.querySelectorAll("#colorBy [data-mode]").forEach(b => b.addEventListener("click", () => setColorBy(b.dataset.mode)));
     setSpin(state.spinRpm);
     $("spinBtn").addEventListener("click", toggleSpin);
+    $("dockMore").addEventListener("click", () => setDockOpen(!document.body.classList.contains("dock-open")));
+    // A dock action closes the folded dock again shortly after.
+    $("dock").addEventListener("click", e => { if (e.target.closest(".dock-btn") && document.body.classList.contains("sheet-open")) setDockOpen(false, 900); });
+    canvas.addEventListener("pointerdown", () => setDockOpen(false));
     // iPhone Safari has no fullscreen API: hide the button rather than offer a dead one.
     if (!document.fullscreenEnabled) $("fullscreenBtn").hidden = true;
     $("tourBtn").addEventListener("click", () => setTour(!state.tour));
@@ -3001,7 +3032,7 @@ function initUI() {
     canvas.addEventListener("dblclick", cancelTap);
     for (const ev of ["pointermove", "pointerdown", "keydown", "wheel"]) window.addEventListener(ev, wakeUI, { passive: true });
     $("speed").addEventListener("dblclick", e => {
-        setRange(e.target, DEFAULT_SPEED);
+        setRange(e.target, sliderFromSpeed(DEFAULT_SPEED));
         e.target.dispatchEvent(new Event("input"));
     });
     $("particleCount").addEventListener("dblclick", e => {
@@ -3026,8 +3057,10 @@ function initUI() {
         setCount(n);
     });
     $("speed").addEventListener("input", e => {
-        state.speed = parseFloat(e.target.value);
-        $("speedVal").textContent = state.speed.toFixed(1) + "×";
+        const v = speedFromSlider(parseFloat(e.target.value));
+        // Snap to round values near them, so 1× and 0.5× are easy to hit.
+        state.speed = v < 0.1 ? Math.round(v * 100) / 100 : Math.round(v * 20) / 20;
+        $("speedVal").textContent = formatSpeed(state.speed);
         paintRange(e.target);
     });
 
